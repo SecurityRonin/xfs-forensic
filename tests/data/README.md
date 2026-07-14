@@ -107,6 +107,65 @@ xfs_db -r v4dir.img -c 'inode 131' -c 'print' > v4dir.inode131.txt  # sf sfdir2
 # file1.txt content sha256 = 1894d80d... (identical bytes to v5 file1.txt)
 ```
 
+## P5 oracle — bmap B+tree file (`di_format=btree`) + leaf directory
+
+**Part 1 — a heavily-fragmented `btree`-format file** (`v5frag.img`, a dedicated
+512 MiB v5 image, gitignored). Delayed allocation coalesces buffered writes, so
+fragmentation is forced with **direct I/O** (`xfs_io -d`): each target block is
+written with its own `pwrite` interleaved with a separator file that grabs the
+adjacent block, so every target block lands physically isolated. Removing the
+separators leaves 700 non-coalescable single-block extents — enough to overflow
+the inline data fork and push the inode to `di_format = 3 (btree)`.
+
+```bash
+truncate -s 512M v5frag.img
+mkfs.xfs -f v5frag.img > v5frag.mkfs.txt
+mount -o loop v5frag.img mntfrag
+F=mntfrag/frag.bin ; N=700
+for i in $(seq 0 $((N-1))); do
+  xfs_io -f -d -c "pwrite -b 4096 $((i*4096)) 4096" "$F"          # direct: real alloc now
+  xfs_io -f -d -c "pwrite -b 4096 0 4096" "mntfrag/sep_$i"        # separator grabs next block
+done
+sync
+xfs_io -c "pwrite -S 0xAB -b 65536 0 $((N*4096))" "$F"           # deterministic content
+sync ; rm -f mntfrag/sep_* ; sync
+sha256sum "$F" | awk '{print $1}' > v5frag.content.sha256         # Tier-1 content hash
+umount mntfrag
+xfs_db -r v5frag.img -c 'inode 131' -c 'print' > v5frag.inode_print.txt  # core.format=3 (btree)
+xfs_db -r v5frag.img -c 'inode 131' -c 'bmap'  > v5frag.bmap.txt         # ALL 700 extents, startoff order
+```
+
+The minted result (`v5frag.inode_print.txt`): `core.format = 3 (btree)`,
+`core.nextents = 700`, `core.size = 2867200`, and the bmbt root header
+`u3.bmbt.level = 1`, `u3.bmbt.numrecs = 3`, `u3.bmbt.ptrs[1-3] = 1:64 2:558
+3:1101` (three leaf blocks). Leaf block fsblock 64 header (raw): magic `42 4d 41
+33` = **`BMA3`** (v5 CRC bmbt), `bb_level = 0`, `bb_numrecs = 251`; the first
+16-byte `xfs_bmbt_rec` begins at byte **72** (`XFS_BTREE_LBLOCK_CRC_LEN` — long
+form + CRC header). `bmap` lists all 700 extents (`offset 0 startblock 13 count
+1` … `offset 699 startblock 1522 count 1`) — the Part-1 walk-completeness oracle.
+The reconstructed content sha256 is the Tier-1 gate.
+
+**Part 2 — leaf directory listing** (`v5.img`, inode 655488, `~2000` entries).
+The `~2000`-child `leaf/` directory is multi-block `Extents` format (`core.size =
+49152`, `core.nextents = 19`) — its dir data blocks carry magic **`XDD3`**
+(`0x58444433`, the *multi-block* data-block magic, distinct from the single-block
+`XDB3`), and the leaf/hash + freeindex live in separate blocks above the
+`XFS_DIR2_LEAF_OFFSET` address-space boundary (extent `startoff` 0x800000 and
+0x1000000). Listing needs only the DATA blocks. Independent oracle = mount-ro
+`ls -i` (a from-scratch parse cross-checked against the kernel's own walk):
+
+```bash
+mount -o ro,loop v5.img mntleaf
+ls -i mntleaf/leaf | sort -V > leaf.ls_i.txt      # 2000 lines: "<inode> f0001".."f2000"
+umount mntleaf
+xfs_db -r v5.img -c 'inode 655488' -c 'dblock 0' -c 'print' > v5.dir_leaf_dblock0.txt  # XDD3 data block
+```
+
+`leaf.ls_i.txt`: names `f0001`..`f2000` (exact), inodes `655489`..`657680`
+(2000 unique; 3 gaps in the sequence — the test compares against the committed
+listing, never an assumed contiguity). This is the Part-2 `read_dir(leaf/)`
+Tier-1 gate.
+
 ## Committed oracle files (index)
 
 | file | oracle | what it anchors |
@@ -122,6 +181,10 @@ xfs_db -r v4dir.img -c 'inode 131' -c 'print' > v4dir.inode131.txt  # sf sfdir2
 | `v5.inode_small.txt` / `v5.bmap_small.txt` | `xfs_db inode 132 print` + `bmap` | P3 small extent-list file (`file1.txt`, size 10, single extent startblock 13 count 1 — content-hash check) |
 | `v5.convert_big.txt` / `v5.convert_root.txt` / `v5.convert_agspan.txt` | `xfs_db convert` | **P1 inode-number decode ground truth** (agno/agino/agblock/offset/fsblock) |
 | `v5.dir_sf.txt` / `v5.dir_block.txt` / `v5.dir_leaf.txt` | `xfs_db inode N print` | P4 the three dir shapes (sf inode 131 / block inode 262272 / leaf inode 655488) |
+| `v5frag.inode_print.txt` / `v5frag.bmap.txt` | `xfs_db inode 131 print` + `bmap` (v5frag.img) | **P5 bmbt B+tree file** — `core.format=3 (btree)`, 700 single-block extents, bmbt root `level=1 numrecs=3 ptrs=64/558/1101`; bmap = all 700 extents (walk-completeness oracle) |
+| `v5frag.content.sha256` / `v5frag.inode.txt` / `v5frag.mkfs.txt` | `sha256sum` / provenance | **P5 Part-1 content Tier-1** (reconstructed btree file sha256), frag inode/size, mkfs provenance |
+| `leaf.ls_i.txt` | `mount -o ro` + `ls -i mnt/leaf` (v5.img) | **P5 Part-2 leaf-dir listing Tier-1** — 2000 `{name f0001..f2000 -> inode}` cross-checked vs the kernel walk |
+| `v5.dir_leaf_dblock0.txt` | `xfs_db inode 655488 dblock 0 print` | **P5 leaf-dir data block** — v5 `XDD3` (0x58444433) multi-block data magic, `.`/`..` + f-entries |
 | `v5.dir_block_dblock.txt` | `xfs_db inode 262272 dblock 0 print` | **P4 block-dir data block** — v5 `XDB3` header, `.`/`..` + e01..e40, `btail.count = 42` |
 | `v4dir.inode128.txt` / `v4dir.inode131.txt` | `xfs_db inode N print` (v4dir.img) | **P4 v4 no-ftype short-form** — `sfdir2` struct (NO `filetype`), root 131 sf, sf 132/133/134 |
 | `v4dir.mkfs.txt` | `mkfs.xfs -m crc=0 -n ftype=0` | provenance of the no-ftype v4 image |
@@ -134,6 +197,12 @@ xfs_db -r v4dir.img -c 'inode 131' -c 'print' > v4dir.inode131.txt  # sf sfdir2
 sha256  v5.img     85b770945e3d3f2d76e3c858cfbb35abaab66b3c88e17189b14a06c087a2969c
 sha256  v4.img     425b894b8d616526a238c4d3432f43e337bf1d7fc56dd1fb60f8c9cffe0fde36
 sha256  v4dir.img  f2411a9109cc65d21a2bbebe0c2e53391f396464cb037ebe13aff09ee8587acf
+sha256  v5frag.img de2c11114bde8f379a7c26d9b72d93bcc135207a065a305df992003d475c332c
+```
+
+The `v5frag.img` btree file (inode 131) reconstructed content sha256:
+```
+frag.bin  b8fa13c187668448f4bff29323b1d65b60b75deafb8baa1dd05a864f96fa8c78
 ```
 
 Content hashes (from `mount -o ro` + `sha256sum`):
@@ -150,7 +219,9 @@ the same sha256 (`1894d80d…`).
 ## Env-gated test consumption
 
 Oracle-gated tests read the images from `XFS_ORACLE_V5_IMG` / `XFS_ORACLE_V4_IMG`
-/ `XFS_ORACLE_V4DIR_IMG` (absolute paths). They skip cleanly when the env vars are
-unset — the images are not committed, so CI without the minted corpus is green,
-while a local run with the corpus present validates against the oracle. Default
-path (when unset): `tests/data/v5.img` / `tests/data/v4.img` / `tests/data/v4dir.img`.
+/ `XFS_ORACLE_V4DIR_IMG` / `XFS_ORACLE_V5FRAG_IMG` (absolute paths). They skip
+cleanly when the env vars are unset — the images are not committed, so CI without
+the minted corpus is green, while a local run with the corpus present validates
+against the oracle. Default path (when unset): `tests/data/v5.img` /
+`tests/data/v4.img` / `tests/data/v4dir.img` / `tests/data/v5frag.img` (the P5
+btree-format fragmented file).
