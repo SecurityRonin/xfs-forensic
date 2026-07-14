@@ -52,7 +52,8 @@ for v in v5 v4; do
   xfs_db -r $v.img -c 'agi 0'  -c 'print' > $v.agi0.txt
   xfs_db -r $v.img -c 'agf 0'  -c 'print' > $v.agf0.txt
   xfs_db -r $v.img -c 'agfl 0' -c 'print' > $v.agfl0.txt
-  xfs_db -r $v.img -c 'inode 64' -c 'print' > $v.inode64.txt
+  xfs_db -r $v.img -c 'inode 64'  -c 'print' > $v.inode64.txt
+  xfs_db -r $v.img -c 'inode 128' -c 'print' > $v.inode128.txt   # root dir inode (P2)
   fsstat $v.img > $v.fsstat.txt   # NOTE: TSK 4.12.1 (Ubuntu) has NO XFS support — fails
   fls -r $v.img > $v.fls.txt      #       both fsstat and fls fail (recorded verbatim)
 done
@@ -74,7 +75,8 @@ xfs_db -r v5.img ... convert                                    > v5.convert_ags
 | `v5.agi0.txt` / `v5.agf0.txt` (+ v4) | `xfs_db agi/agf 0` | P1 AG headers incl. `agi_unlinked[]` |
 | `v5.agfl0.txt` / `v4.agfl0.txt` | `xfs_db agfl 0 print` | P1 AGFL free-list ring; v5 has the `XAFL` header (magic/seqno/uuid/lsn/crc) + 119 `bno[]` slots, v4 is a bare 128-slot `bno[]` array (no header) |
 | `v5.inode64.txt` / `v5.inode128.txt` | `xfs_db inode N print` | P2 inode core (v3), rootino=128 |
-| `v4.inode64.txt` | `xfs_db inode 64 print` | P2 inode core (v2) |
+| `v4.inode64.txt` | `xfs_db inode 64 print` | P2 inode core (v2), unallocated slot (all-zero, `di_format = dev`) |
+| `v4.inode128.txt` | `xfs_db inode 128 print` | **P2 inode core (v2)**, v4 root dir — `version = 2`, `format = local`, legacy `(sec:i32, nsec:i32)` timestamp path |
 | `v5.inode_big.txt` / `v5.bmap_big.txt` | `xfs_db inode 135 print` + `bmap` | P3 extent-list file (single extent, startblock 24, count 4096) |
 | `v5.convert_big.txt` / `v5.convert_root.txt` / `v5.convert_agspan.txt` | `xfs_db convert` | **P1 inode-number decode ground truth** (agno/agino/agblock/offset/fsblock) |
 | `v5.dir_sf.txt` / `v5.dir_block.txt` / `v5.dir_leaf.txt` | `xfs_db inode N print` | P4 the three dir shapes |
