@@ -60,6 +60,9 @@ done
 # big.bin inode (135) — single-extent decode + bmap ground truth
 xfs_db -r v5.img -c 'inode 135' -c 'print'                      > v5.inode_big.txt
 xfs_db -r v5.img -c 'inode 135' -c 'bmap'                       > v5.bmap_big.txt
+# file1.txt inode (132) — small single-extent file (10 bytes in a 1-block extent)
+xfs_db -r v5.img -c 'inode 132' -c 'print'                      > v5.inode_small.txt
+xfs_db -r v5.img -c 'inode 132' -c 'bmap'                       > v5.bmap_small.txt
 xfs_db -r v5.img -c 'convert inode 135 agno'  -c '... agino' \
                  -c '... agblock' -c '... offset' -c '... fsblock' > v5.convert_big.txt
 # AG-spanning inodes (block dir 262272 -> agno 1, leaf dir 655488 -> agno 2)
@@ -78,6 +81,7 @@ xfs_db -r v5.img ... convert                                    > v5.convert_ags
 | `v4.inode64.txt` | `xfs_db inode 64 print` | P2 inode core (v2), unallocated slot (all-zero, `di_format = dev`) |
 | `v4.inode128.txt` | `xfs_db inode 128 print` | **P2 inode core (v2)**, v4 root dir — `version = 2`, `format = local`, legacy `(sec:i32, nsec:i32)` timestamp path |
 | `v5.inode_big.txt` / `v5.bmap_big.txt` | `xfs_db inode 135 print` + `bmap` | P3 extent-list file (single extent, startblock 24, count 4096) |
+| `v5.inode_small.txt` / `v5.bmap_small.txt` | `xfs_db inode 132 print` + `bmap` | P3 small extent-list file (`file1.txt`, size 10, single extent startblock 13 count 1 — content-hash check) |
 | `v5.convert_big.txt` / `v5.convert_root.txt` / `v5.convert_agspan.txt` | `xfs_db convert` | **P1 inode-number decode ground truth** (agno/agino/agblock/offset/fsblock) |
 | `v5.dir_sf.txt` / `v5.dir_block.txt` / `v5.dir_leaf.txt` | `xfs_db inode N print` | P4 the three dir shapes |
 | `content.sha256` / `content.ro.sha256` | `sha256sum` (rw + ro mount) | P3 content Tier-1 |
