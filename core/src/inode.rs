@@ -227,6 +227,12 @@ pub struct Inode {
     /// `di_crc` (offset 100, little-endian) — inode CRC32c; `None` on v2.
     /// **Exposed, not verified** — verification is P6.
     pub crc: Option<u32>,
+    /// The raw data-fork ("u" union) bytes — everything from
+    /// [`Self::data_fork_offset`] to the end of the inode-sized slice. For an
+    /// [`InodeFormat::Extents`] inode this holds the inline `xfs_bmbt_rec`
+    /// array P3 decodes; for [`InodeFormat::Local`] it holds the short-form
+    /// dir/symlink (P4). Empty when the slice was exactly the core length.
+    pub data_fork: Vec<u8>,
 }
 
 impl Inode {
@@ -293,6 +299,16 @@ impl Inode {
             (None, None, None, None, None)
         };
 
+        // The data fork ("u" union) begins at 176 (v3) / 100 (v2). Capture the
+        // remainder of the inode slice so P3/P4 can decode the inline extent
+        // array / short-form dir without re-slicing the image.
+        let fork_off = if is_v3 {
+            V3_LITINO_OFFSET
+        } else {
+            V2_LITINO_OFFSET
+        };
+        let data_fork = data.get(fork_off..).unwrap_or(&[]).to_vec();
+
         Ok(Self {
             magic,
             mode: be_u16(data, 2),
@@ -313,6 +329,7 @@ impl Inode {
             di_ino,
             uuid,
             crc,
+            data_fork,
         })
     }
 

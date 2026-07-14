@@ -20,6 +20,7 @@
 mod agheaders;
 pub mod bytes;
 mod error;
+mod extent;
 mod inode;
 mod superblock;
 
@@ -27,6 +28,7 @@ pub use agheaders::{
     Agf, Agfl, Agi, XFS_AGFL_MAGIC, XFS_AGF_MAGIC, XFS_AGI_MAGIC, XFS_AGI_UNLINKED_BUCKETS,
 };
 pub use error::XfsError;
+pub use extent::{read_extents, read_file_from_fork, BmbtRec};
 pub use inode::{
     FileType, Inode, InodeFormat, XfsTimestamp, XFS_DIFLAG2_BIGTIME, XFS_DINODE_MAGIC,
 };
