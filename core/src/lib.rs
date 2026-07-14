@@ -16,3 +16,10 @@
 
 #![forbid(unsafe_code)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
+
+pub mod bytes;
+mod error;
+mod superblock;
+
+pub use error::XfsError;
+pub use superblock::{Superblock, XFS_SB_MAGIC};
