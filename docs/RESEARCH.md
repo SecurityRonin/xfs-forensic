@@ -220,7 +220,36 @@ inode-number encoding + five dir formats + self-describing v5 metadata.
     skipped. **Oracle:** `read_dir(leaf/, inode 655488)` == mount-ro `ls -i`
     (2000 `{f0001..f2000 → inode}`); `read_by_path("/leaf/f0001")` resolves.
   - Sparse inodes remain deferred (past MVP).
-- **P6** v5 CRC32c + self-describing header validation.
+- **P6 — DONE.** v5 CRC32c self-describing-metadata validation. On v5 (and ONLY
+  v5 — v4 has no CRCs) every metadata block carries a CRC32c
+  (Castagnoli/`CRC_32_ISCSI`) over the whole on-disk object with the 4-byte CRC
+  field treated as zero, stored little-endian. `crc::verify_crc(buffer,
+  crc_offset)` reproduces the kernel `xfs_verify_cksum` byte-exactly (scratch
+  copy, CRC field zeroed in place); `crc::crc_status(is_v5, buffer, off)` is the
+  v4→`None` / v5→`Some` seam. CRC verification is **non-fatal** — a bad CRC never
+  fails a parse; it surfaces as `crc_valid: Option<bool>` for the `-forensic`
+  layer (F3) to turn into a Finding. **CRC offsets (VERBATIM from `xfs_format.h`
+  / `xfs_da_format.h`, each `offsetof(...)`):** SB `sb_crc` 224 · AGF `agf_crc`
+  216 · AGI `agi_crc` **312** (after `unlinked[64]`+uuid — NOT the naive early
+  offset) · AGFL `agfl_crc` 32 · inode v3 `di_crc` 100 · dir data/single-block
+  `xfs_dir3_blk_hdr.crc` 4 · dir leaf/node `xfs_da3_blkinfo.crc` 12 · bmbt
+  long-form `bb_u.l.bb_crc` 64. Coverage length = the object's whole buffer
+  (sector / inodesize / blocksize), matching the kernel `BBTOB(bp->b_length)`.
+  Surfaced on `Superblock`/`Inode` (computed in `parse` — they self-describe
+  version), `Agf`/`Agi` (`parse_verified(data, is_v5)`; plain `parse` leaves
+  `None`), `Agfl` (`parse_v5` verifies, `parse_v4` → `None`), and standalone
+  `verify_dir_block_crc` / `verify_bmbt_block_crc` (detect v5 vs v4 by magic).
+  **Oracle (Tier-1, xfsprogs is the independent CRC author):** every unmodified
+  metadata block from `v5.img` / `v5frag.img` verifies `Some(true)` — SB, AG-0
+  AGF/AGI/AGFL, root inode 128, an `XDD3` dir data block, a da3 leaf/node block,
+  a `BMA3` bmbt block; a single flipped byte flips to `Some(false)`; the v4
+  images report `None`. This **completes `xfs-core` (P0–P6)** — the reader parses
+  all file formats (inline/extents/btree) + all dir formats and validates v5
+  self-describing metadata.
+
+**Next: `xfs-forensic` F1–F4** (analyzer layer) — deleted-inode recovery,
+directory-slack residue, structural integrity (F3 consumes P6's `crc_valid`),
+timestamp anomalies.
 
 **`xfs-forensic` (analyzer, over raw `Read+Seek`/bytes per the reader/analyzer-split
 principle — the auditor must see slack the reader normalizes):**

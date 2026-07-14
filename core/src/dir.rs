@@ -84,14 +84,11 @@ pub const XFS_DIR2_DATA_MAGIC: u32 = 0x5844_3244;
 const XFS_DIR3_LEAF1_MAGIC: u16 = 0x3df1;
 /// v5 dir multi-block leaf magic (`XFS_DIR3_LEAFN_MAGIC`).
 const XFS_DIR3_LEAFN_MAGIC: u16 = 0x3dff;
-/// v5 da-btree node magic (`XFS_DA3_NODE_MAGIC`).
+/// v5 da-btree node magic (`XFS_DA3_NODE_MAGIC`). (The v4 leaf/node magics
+/// `XFS_DIR2_LEAF1_MAGIC` 0xd2f1 / `XFS_DIR2_LEAFN_MAGIC` 0xd2ff /
+/// `XFS_DA_NODE_MAGIC` 0xfebe carry no CRC and need no constant — they fall
+/// through to the `None` arm alongside every unrecognized block.)
 const XFS_DA3_NODE_MAGIC: u16 = 0x3ebe;
-/// v4 dir single-block leaf magic (`XFS_DIR2_LEAF1_MAGIC`) — no CRC.
-const XFS_DIR2_LEAF1_MAGIC: u16 = 0xd2f1;
-/// v4 dir multi-block leaf magic (`XFS_DIR2_LEAFN_MAGIC`) — no CRC.
-const XFS_DIR2_LEAFN_MAGIC: u16 = 0xd2ff;
-/// v4 da-btree node magic (`XFS_DA_NODE_MAGIC`) — no CRC.
-const XFS_DA_NODE_MAGIC: u16 = 0xfebe;
 
 /// The `xfs_dir3_data_hdr` (v5) header length preceding the first data entry.
 const DIR3_DATA_HDR_LEN: usize = 64;
@@ -308,12 +305,13 @@ pub fn verify_dir_block_crc(block: &[u8]) -> Option<bool> {
         _ => {}
     }
     // Leaf / node / freeindex header (`xfs_da_blkinfo`): 16-bit magic at offset 8.
+    // v5 magics carry a CRC at offset 12; the v4 leaf/node magics
+    // (0xd2f1 / 0xd2ff / 0xfebe) have none, and neither does any unrecognized
+    // block — all fall through to `None` (no CRC claim, never a false mismatch).
     match be_u16(block, 8) {
         XFS_DIR3_LEAF1_MAGIC | XFS_DIR3_LEAFN_MAGIC | XFS_DA3_NODE_MAGIC => {
             Some(verify_crc(block, DA3_BLKINFO_CRC_OFF))
         }
-        XFS_DIR2_LEAF1_MAGIC | XFS_DIR2_LEAFN_MAGIC | XFS_DA_NODE_MAGIC => None,
-        // Not a directory block this reader recognizes: no CRC claim.
         _ => None,
     }
 }

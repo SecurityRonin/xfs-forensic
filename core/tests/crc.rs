@@ -134,6 +134,59 @@ fn v5_dir_data_block_crc_verifies() {
 }
 
 #[test]
+fn v5_dir_leaf_node_block_crc_verifies() {
+    let Some(img) = image_bytes("XFS_ORACLE_V5_IMG", "v5.img") else {
+        eprintln!("skip: v5 image absent");
+        return;
+    };
+    // A v5 dir leaf / node / freeindex block carries `xfs_da3_blkinfo` with a
+    // 16-bit magic at block offset 8 (0x3df1 leaf1 / 0x3dff leafn / 0x3ebe node)
+    // and its CRC at offset 12. Find the first such block and verify it.
+    let mut b = 0;
+    let mut checked = false;
+    while b + V5_BLOCKSIZE <= img.len() {
+        let blk = &img[b..b + V5_BLOCKSIZE];
+        let magic16 = u16::from_be_bytes([blk[8], blk[9]]);
+        if matches!(magic16, 0x3df1 | 0x3dff | 0x3ebe) {
+            assert_eq!(
+                verify_dir_block_crc(blk),
+                Some(true),
+                "unmodified v5 dir leaf/node block (magic {magic16:#06x}) CRC must verify"
+            );
+            checked = true;
+            break;
+        }
+        b += V5_BLOCKSIZE;
+    }
+    assert!(
+        checked,
+        "the leaf directory yields at least one da3 leaf/node block"
+    );
+}
+
+#[test]
+fn v4_dir_data_block_reports_none() {
+    // A v4 single-block dir header (`XD2B`, 0x58443242) carries no CRC -> None.
+    // (The v4 oracle uses short-form dirs, so this is a crafted header — the
+    // point is only that a recognized v4 magic yields None, not a false
+    // mismatch.)
+    let mut blk = vec![0u8; V5_BLOCKSIZE];
+    blk[0..4].copy_from_slice(&0x5844_3242u32.to_be_bytes()); // "XD2B"
+    assert_eq!(
+        verify_dir_block_crc(&blk),
+        None,
+        "v4 XD2B dir block -> None"
+    );
+    // And the v4 multi-block data magic `XD2D` (0x58443244) likewise.
+    blk[0..4].copy_from_slice(&0x5844_3244u32.to_be_bytes()); // "XD2D"
+    assert_eq!(
+        verify_dir_block_crc(&blk),
+        None,
+        "v4 XD2D dir block -> None"
+    );
+}
+
+#[test]
 fn v5_bmbt_block_crc_verifies() {
     let Some(img) = image_bytes("XFS_ORACLE_V5FRAG_IMG", "v5frag.img") else {
         eprintln!("skip: v5frag image absent");
@@ -268,6 +321,15 @@ fn verify_crc_short_buffer_is_false_not_panic() {
     // Buffer too short to hold the CRC field at the given offset -> false.
     assert!(!verify_crc(&[0u8; 4], 224), "224+4 > 4 -> false");
     assert!(!verify_crc(&[], 0), "empty buffer -> false");
+    // A hostile offset near usize::MAX must not overflow-panic -> false.
+    assert!(
+        !verify_crc(&[0u8; 512], usize::MAX),
+        "usize::MAX offset -> false, no panic"
+    );
+    assert!(
+        !verify_crc(&[0u8; 512], usize::MAX - 2),
+        "offset whose +4 overflows -> false"
+    );
     // crc_status wraps it: v5 + short -> Some(false); v4 -> None regardless.
     assert_eq!(crc_status(true, &[0u8; 2], 224), Some(false));
     assert_eq!(crc_status(false, &[0u8; 2], 224), None);

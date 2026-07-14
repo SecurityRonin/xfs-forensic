@@ -82,9 +82,11 @@ const BMDR_HDR_LEN: usize = 4;
 /// `Some(false)`.
 #[must_use]
 pub fn verify_bmbt_block_crc(block: &[u8]) -> Option<bool> {
+    // A v5 `BMA3` block carries a CRC at offset 64; a v4 `BMAP` block has none,
+    // and neither does a non-bmbt block — both fall through to `None` (no CRC
+    // claim, never a false mismatch).
     match be_u32(block, 0) {
         XFS_BMAP_CRC_MAGIC => Some(verify_crc(block, BMBT_CRC_OFF)),
-        XFS_BMAP_MAGIC => None,
         _ => None,
     }
 }

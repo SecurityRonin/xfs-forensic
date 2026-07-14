@@ -62,7 +62,6 @@ pub const BMBT_CRC_OFF: usize = 64;
 /// equals the kernel's `~crc32c(~0, buffer)` — i.e. the exact value XFS stores
 /// on disk (little-endian) via `xfs_end_cksum`. Constructing the `Crc` is cheap
 /// (it references a static algorithm), so it is built per call.
-#[allow(dead_code)] // RED: unused until the GREEN verify_crc implementation lands
 fn crc32c() -> crc::Crc<u32> {
     crc::Crc::<u32>::new(&crc::CRC_32_ISCSI)
 }
@@ -84,11 +83,35 @@ fn crc32c() -> crc::Crc<u32> {
 /// zero bytes, then `[crc_offset+4..]` — is byte-identical; the copy is chosen
 /// for clarity and is bounded by the fixed metadata-object size.)
 #[must_use]
-pub fn verify_crc(_buffer: &[u8], _crc_offset: usize) -> bool {
-    // RED stub — no CRC computation yet. Every verification fails, so the
-    // positive-verify-on-real-image tests (which expect `Some(true)`) are RED
-    // until the GREEN implementation lands.
-    false
+pub fn verify_crc(buffer: &[u8], crc_offset: usize) -> bool {
+    // A hostile `crc_offset` near `usize::MAX` would overflow `crc_offset + 4`;
+    // guard it so the API is panic-free for any caller-supplied offset (this is
+    // a public, fuzz-facing entry point, not only the fixed internal offsets).
+    let Some(end) = crc_offset.checked_add(4) else {
+        return false;
+    };
+    // The buffer must hold the whole CRC field to carry a checksum at all.
+    let Some(stored_bytes) = buffer.get(crc_offset..end) else {
+        return false;
+    };
+    let stored = u32::from_le_bytes([
+        stored_bytes[0],
+        stored_bytes[1],
+        stored_bytes[2],
+        stored_bytes[3],
+    ]);
+
+    // Scratch copy with the CRC field zeroed in place (kernel semantics), then
+    // CRC the whole object. `CRC_32_ISCSI`'s digest already applies the final
+    // complement + reflection, so it equals the stored on-disk value directly.
+    let mut scratch = buffer.to_vec();
+    // `end <= buffer.len()` was just proven by the successful `get`, so this
+    // slice is in range on the equal-length copy.
+    if let Some(field) = scratch.get_mut(crc_offset..end) {
+        field.fill(0);
+    }
+    let computed = crc32c().checksum(&scratch);
+    computed == stored
 }
 
 /// Compute the non-fatal CRC status for a metadata `buffer`: `Some(bool)` on a
