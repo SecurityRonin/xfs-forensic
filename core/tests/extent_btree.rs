@@ -365,3 +365,85 @@ fn btree_excessive_level_is_bounded() {
     let recs = xfs::read_btree_extents(&img, &sb, &root).expect("capped, no hang");
     assert!(recs.is_empty());
 }
+
+/// Build a v4 (`BMAP`, no CRC) bmbt LEAF block: 24-byte long-form header + recs.
+fn build_bmap_v4_leaf(recs: &[[u8; 16]], blocksize: usize) -> Vec<u8> {
+    let mut b = vec![0u8; blocksize];
+    b[0..4].copy_from_slice(&0x424d_4150u32.to_be_bytes()); // BMAP
+    b[4..6].copy_from_slice(&0u16.to_be_bytes()); // bb_level = 0 (leaf)
+    b[6..8].copy_from_slice(&u16::try_from(recs.len()).unwrap().to_be_bytes());
+    // long-form v4 header: leftsib(8)/rightsib(8) = null, then recs at byte 24.
+    b[8..16].copy_from_slice(&u64::MAX.to_be_bytes());
+    b[16..24].copy_from_slice(&u64::MAX.to_be_bytes());
+    let mut off = 24usize; // XFS_BTREE_LBLOCK_LEN
+    for r in recs {
+        b[off..off + 16].copy_from_slice(r);
+        off += 16;
+    }
+    b
+}
+
+#[test]
+fn btree_v4_bmap_leaf_header_is_24_bytes() {
+    // A v4 (BMAP) leaf uses the 24-byte non-CRC long-form header: the walker
+    // must read records at byte 24, not 72. Exercises the XFS_BMAP_MAGIC arm.
+    let blocksize = 4096usize;
+    let mut img = vec![0u8; blocksize * 8];
+    write_min_sb(&mut img, blocksize as u32);
+    let sb = Superblock::parse(&img).unwrap();
+    let leaf = build_bmap_v4_leaf(&[pack(0, 7, 3, false)], blocksize);
+    img[2 * blocksize..3 * blocksize].copy_from_slice(&leaf);
+    let root = build_bmdr_root(1, &[0], &[2], 336);
+    let recs = xfs::read_btree_extents(&img, &sb, &root).expect("v4 BMAP leaf walk");
+    assert_eq!(recs.len(), 1);
+    assert_eq!(recs[0].startblock, 7);
+    assert_eq!(recs[0].blockcount, 3);
+}
+
+#[test]
+fn btree_root_fork_truncated_mid_ptr_array_does_not_panic() {
+    // A root fork truncated inside its pointer array: dmaxrecs is recomputed
+    // from the actual (shorter) fork length, so the walk reads only the ptr
+    // slots that fully fit and never over-reads or panics.
+    let blocksize = 4096usize;
+    let mut img = vec![0u8; blocksize * 4];
+    write_min_sb(&mut img, blocksize as u32);
+    let sb = Superblock::parse(&img).unwrap();
+    let mut root = build_bmdr_root(1, &[0, 1], &[2, 2], 36);
+    root.truncate(30); // cut inside the pointer array
+    let recs = xfs::read_btree_extents(&img, &sb, &root).expect("fork-truncated walk");
+    // fsblock 2 is zeroed (no BMA3 magic) -> any readable ptr yields nothing.
+    assert!(recs.is_empty());
+}
+
+#[test]
+fn btree_leaf_over_claims_numrecs_stops_at_block_bound() {
+    // A leaf whose bb_numrecs claims more 16-byte records than fit in the block:
+    // collect_leaf_recs must stop at the block bound (line 216), not over-read.
+    let blocksize = 128usize;
+    let mut img = vec![0u8; blocksize * 8];
+    write_min_sb(&mut img, blocksize as u32);
+    img[4..8].copy_from_slice(&(blocksize as u32).to_be_bytes());
+    img[120] = 7;
+    let sb = Superblock::parse(&img).unwrap();
+
+    // Leaf at fsblock 2: header 72, so room for (128-72)/16 = 3 recs, but claim
+    // numrecs = 250. The walker collects the 3 that fit then breaks.
+    let mut leaf = vec![0u8; blocksize];
+    leaf[0..4].copy_from_slice(&0x424d_4133u32.to_be_bytes()); // BMA3
+    leaf[4..6].copy_from_slice(&0u16.to_be_bytes()); // level 0
+    leaf[6..8].copy_from_slice(&250u16.to_be_bytes()); // over-claimed numrecs
+    leaf[8..16].copy_from_slice(&u64::MAX.to_be_bytes());
+    leaf[16..24].copy_from_slice(&u64::MAX.to_be_bytes());
+    // three valid records at 72, 88, 104.
+    for (i, sbk) in [11u64, 12, 13].iter().enumerate() {
+        let r = pack(i as u64, *sbk, 1, false);
+        let o = 72 + i * 16;
+        leaf[o..o + 16].copy_from_slice(&r);
+    }
+    img[2 * blocksize..3 * blocksize].copy_from_slice(&leaf);
+    let root = build_bmdr_root(1, &[0], &[2], 336);
+    let recs = xfs::read_btree_extents(&img, &sb, &root).expect("over-claim leaf walk");
+    assert_eq!(recs.len(), 3, "only the records that fit are collected");
+    assert_eq!(recs[2].startblock, 13);
+}

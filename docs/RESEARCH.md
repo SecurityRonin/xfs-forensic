@@ -199,9 +199,27 @@ inode-number encoding + five dir formats + self-describing v5 metadata.
   oracle: `xfs_db` dir dumps + mount-ro `ls -i` name→inode + capstone content
   sha256 through path navigation; TSK has no XFS on this host so `fls` is not the
   oracle). The ftype byte tracks the fs FEATURE bit (`Superblock::has_ftype`),
-  not the v4/v5 version — modern mkfs enables ftype on v4. **leaf → node → btree
-  deferred to P4b/P5** (a dir of an unhandled format fails loud `UnsupportedDir`).
-- **P5** bmap B+tree (`di_format=3`) + sparse inodes. Oracle: `xfs_db bmap`, `fls -r` full, TSK.
+  not the v4/v5 version — modern mkfs enables ftype on v4. leaf → node → btree
+  handled in P5.
+- **P5 DONE** — two parts, both Tier-1 validated:
+  - **Part 1: bmap B+tree file read (`di_format=3`, `read_btree_extents`).** The
+    inline `xfs_bmdr_block` root (fork: `bb_level`/`bb_numrecs` then keys[dmaxrecs]
+    + ptrs[dmaxrecs] at the `4 + dmaxrecs*8` offset) → on-disk bmbt blocks (`BMA3`
+    v5, 72-byte CRC long-form header / `BMAP` v4, 24-byte header) → 16-byte
+    `xfs_bmbt_rec` leaves, walked in `startoff` order and fed to the shared
+    extent→file `assemble_extents`. Bounded (MAX_BMBT_LEVELS/MAX_BMBT_PTRS caps,
+    every block access bounds-checked). Layouts verbatim from `xfs_format.h`,
+    ptr-offset + header-size verified against `xfs_db` on a real 700-extent btree
+    file. **Oracle:** `v5frag.img` inode 131 — `read_file` sha256 ==
+    mount-ro `b8fa13c1…`; `read_btree_extents` == all 700 extents of `xfs_db bmap`.
+  - **Part 2: leaf/node/btree directories.** `read_dir` extended: multi-block
+    `Extents` dirs (`size > blocksize`) and `Btree` dirs walk their DATA extents
+    (logical offset below `XFS_DIR2_LEAF_OFFSET = 1<<35`), reading each `XDD3`
+    (v5) / `XD2D` (v4) multi-block data block (no block tail — entries fill the
+    block) via the shared entry walker. leaf/hash + freeindex index blocks are
+    skipped. **Oracle:** `read_dir(leaf/, inode 655488)` == mount-ro `ls -i`
+    (2000 `{f0001..f2000 → inode}`); `read_by_path("/leaf/f0001")` resolves.
+  - Sparse inodes remain deferred (past MVP).
 - **P6** v5 CRC32c + self-describing header validation.
 
 **`xfs-forensic` (analyzer, over raw `Read+Seek`/bytes per the reader/analyzer-split

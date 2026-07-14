@@ -334,6 +334,42 @@ fn read_file_truncated_fork_does_not_panic() {
     assert_eq!(out.unwrap().len(), blocksize);
 }
 
+#[test]
+fn read_file_local_format_inode_yields_zerofill() {
+    // read_file on a LOCAL-format inode (inline data, e.g. a short symlink) is
+    // not an extent-mapped body: it must NOT misread the inline fork as an
+    // extent array. The dispatch takes the fall-through arm -> a `di_size`
+    // zero-fill (never a garbage extent decode). Exercises the Local/Dev arm.
+    use xfs::{Inode, InodeFormat};
+    let blocksize = 4096usize;
+    let mut img = vec![0u8; blocksize * 4];
+    write_min_sb(&mut img, blocksize as u32);
+    let sb = Superblock::parse(&img).expect("min sb parses");
+
+    // A v3 inode, di_format = LOCAL (1), di_size = 12. The fork holds arbitrary
+    // inline bytes that must NOT be interpreted as an extent record.
+    let mut ib = vec![0u8; 512];
+    ib[0..2].copy_from_slice(&0x494eu16.to_be_bytes()); // "IN"
+    ib[2..4].copy_from_slice(&0o120_777u16.to_be_bytes()); // symlink mode
+    ib[4] = 3; // v3
+    ib[5] = 1; // LOCAL
+    ib[56..64].copy_from_slice(&12u64.to_be_bytes()); // di_size = 12
+    for (i, b) in ib.iter_mut().enumerate().skip(176).take(12) {
+        *b = u8::try_from(i & 0xff).unwrap(); // arbitrary inline bytes
+    }
+    let inode = Inode::parse(&ib).unwrap();
+    assert_eq!(inode.format, InodeFormat::Local);
+
+    let out = sb
+        .read_file(&img, &inode)
+        .expect("local read_file must not panic");
+    assert_eq!(out.len(), 12, "di_size respected");
+    assert!(
+        out.iter().all(|&b| b == 0),
+        "local fork is NOT decoded as extents -> zero-fill (no phantom blocks)"
+    );
+}
+
 /// Write the minimal set of superblock fields `Superblock::parse` reads so the
 /// geometry needed by `read_file` (blocksize/inodesize/version) is valid.
 fn write_min_sb(img: &mut [u8], blocksize: u32) {

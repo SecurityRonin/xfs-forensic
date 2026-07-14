@@ -243,6 +243,60 @@ fn read_data_dir_block_truncated_entry_stops() {
 // -------------------------------------------------------------------------
 
 #[test]
+fn read_dir_multiblock_data_extent_outside_image_is_skipped() {
+    // A leaf/node dir whose DATA extent points at a filesystem block past the
+    // image end: read_multiblock_dir must skip that block (bounds-checked) and
+    // return whatever the in-image blocks held — never panic or over-read.
+    use xfs::{Inode, InodeFormat};
+    // Minimal v5 sb, blocksize 4096, and a directory inode in Extents format
+    // whose size > blocksize (so the multi-block path is taken) with a single
+    // extent mapping logical dir-block 0 -> fsblock 1_000_000 (far past image).
+    let blocksize = 4096usize;
+    let mut img = vec![0u8; blocksize * 4];
+    img[0..4].copy_from_slice(&0x5846_5342u32.to_be_bytes());
+    img[4..8].copy_from_slice(&(blocksize as u32).to_be_bytes());
+    img[56..64].copy_from_slice(&128u64.to_be_bytes());
+    img[84..88].copy_from_slice(&32768u32.to_be_bytes());
+    img[88..92].copy_from_slice(&1u32.to_be_bytes());
+    img[100..102].copy_from_slice(&0xb4a5u16.to_be_bytes());
+    img[104..106].copy_from_slice(&512u16.to_be_bytes());
+    img[106..108].copy_from_slice(&8u16.to_be_bytes());
+    img[120] = 12;
+    img[122] = 9;
+    img[123] = 3;
+    img[124] = 15;
+    img[216..220].copy_from_slice(&1u32.to_be_bytes()); // ftype
+    let sb = Superblock::parse(&img).unwrap();
+
+    // Craft a v3 dir inode: Extents format, size 2*blocksize (> blocksize ->
+    // multi-block path), one extent startoff 0 -> startblock 1_000_000 count 1.
+    let mut ib = vec![0u8; 512];
+    ib[0..2].copy_from_slice(&0x494eu16.to_be_bytes()); // "IN"
+    ib[2..4].copy_from_slice(&0o040_700u16.to_be_bytes()); // dir mode
+    ib[4] = 3; // v3
+    ib[5] = 2; // Extents
+    ib[56..64].copy_from_slice(&((2 * blocksize) as u64).to_be_bytes()); // di_size
+    ib[76..80].copy_from_slice(&1u32.to_be_bytes()); // di_nextents = 1
+                                                     // extent at fork offset 176: startoff 0, startblock 1_000_000, count 1.
+    let mut l0 = 0u64;
+    let mut l1 = 0u64;
+    let startblock: u64 = 1_000_000;
+    l0 |= (startblock >> 43) & ((1 << 9) - 1);
+    l1 |= (startblock & ((1 << 43) - 1)) << 21;
+    l1 |= 1; // blockcount
+    ib[176..184].copy_from_slice(&l0.to_be_bytes());
+    ib[184..192].copy_from_slice(&l1.to_be_bytes());
+    let inode = Inode::parse(&ib).unwrap();
+    assert_eq!(inode.format, InodeFormat::Extents);
+
+    let entries = read_dir(&img, &sb, &inode).expect("out-of-image data extent must not panic");
+    assert!(
+        entries.is_empty(),
+        "the only data block is past the image -> skipped -> empty listing"
+    );
+}
+
+#[test]
 fn single_block_xdb3_still_uses_tail() {
     // Regression: the P4 single-block block-dir path (XDB3, WITH a leaf/hash
     // tail) must remain correct after the P5 multi-block path is added.

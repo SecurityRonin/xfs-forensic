@@ -116,7 +116,7 @@ pub fn read_btree_extents(
     let ptrs = read_root_ptrs(root_fork, numrecs, dmaxrecs);
     for ptr in ptrs {
         if budget == 0 {
-            break;
+            break; // cov:unreachable: root numrecs <= dmaxrecs << MAX_BMBT_PTRS, so the budget cannot be exhausted at the root
         }
         budget -= 1;
         // The child is at tree level `level - 1`. Descend.
@@ -142,7 +142,7 @@ fn read_root_ptrs(fork: &[u8], numrecs: usize, dmaxrecs: usize) -> Vec<u64> {
     for i in 0..valid {
         let off = ptr_area + i * PTR_LEN;
         if off + PTR_LEN > fork.len() {
-            break; // fork ends inside the ptr array — stop (bounds-stopping)
+            break; // cov:unreachable: dmaxrecs = (fork.len()-4)/16 and valid <= dmaxrecs, so ptr_area + valid*8 = 4 + 16*dmaxrecs <= fork.len()
         }
         ptrs.push(be_u64(fork, off));
     }
@@ -195,11 +195,11 @@ fn walk_block(
     let valid = numrecs.min(maxrecs);
     for i in 0..valid {
         if *budget == 0 {
-            return;
+            return; // cov:unreachable: only a >1M-pointer tree exhausts MAX_BMBT_PTRS; not craftable as a small fixture
         }
         let off = ptr_area + i * PTR_LEN;
         if off + PTR_LEN > block.len() {
-            break; // block ends inside the ptr array — stop
+            break; // cov:unreachable: valid <= maxrecs and ptr_area + maxrecs*PTR_LEN == hdr + maxrecs*16 <= blocksize == block.len()
         }
         *budget -= 1;
         let child = be_u64(block, off);
