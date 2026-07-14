@@ -6,6 +6,7 @@
 
 use crate::bytes::{be_u16, be_u32, be_u64, u8_at};
 use crate::error::XfsError;
+use crate::inode::Inode;
 
 /// The XFS superblock magic number, ASCII `"XFSB"` at byte 0.
 pub const XFS_SB_MAGIC: u32 = 0x5846_5342;
@@ -168,6 +169,32 @@ impl Superblock {
             fsblock,
             byte_offset,
         }
+    }
+
+    /// Read and parse the inode `ino` from a whole-image byte buffer.
+    ///
+    /// Locates the inode via [`Self::inode_to_location`], slices exactly
+    /// `sb_inodesize` bytes at its byte offset, and parses the core with
+    /// [`Inode::parse`]. This is the convenience path the reader exposes on top
+    /// of the raw [`Inode::parse`] (which takes the already-sliced bytes).
+    ///
+    /// # Errors
+    ///
+    /// - [`XfsError::Truncated`] if the located byte window lies wholly or
+    ///   partly past the end of `image` (a hostile inode number, or a truncated
+    ///   image) — never a panic.
+    /// - Any error from [`Inode::parse`] (bad magic, short core).
+    pub fn read_inode(&self, image: &[u8], ino: u64) -> Result<Inode, XfsError> {
+        let loc = self.inode_to_location(ino);
+        let start = usize::try_from(loc.byte_offset).unwrap_or(usize::MAX);
+        let size = usize::from(self.inodesize);
+        let end = start.saturating_add(size);
+        let slice = image.get(start..end).ok_or(XfsError::Truncated {
+            structure: "inode (image slice)",
+            need: end,
+            have: image.len(),
+        })?;
+        Inode::parse(slice)
     }
 }
 

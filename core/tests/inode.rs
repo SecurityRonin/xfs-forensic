@@ -5,7 +5,7 @@
 //! from the committed oracle dumps:
 //!
 //! - `tests/data/v5.inode128.txt` — v5 root dir (ino 128, v3 core, bigtime)
-//! - `tests/data/v5.inode_big.txt` — v5 big.bin (ino 135, extents, 16 MiB)
+//! - `tests/data/v5.inode_big.txt` — v5 `big.bin` (ino 135, extents, `16 MiB`)
 //! - `tests/data/v4.inode128.txt` — v4 root dir (ino 128, v2 core, legacy time)
 //!
 //! Timestamps: the oracle prints the minting VM's local time (HKT/+0800), which
@@ -25,6 +25,35 @@
 use std::path::PathBuf;
 
 use xfs::{FileType, Inode, InodeFormat, Superblock};
+
+/// Every `InodeFormat` decode arm — the oracle images only exercise Local and
+/// Extents, so the Dev/Btree/Other arms need explicit coverage (each is a real
+/// selector a hostile or unusual image can carry, not a dead arm).
+#[test]
+fn inode_format_all_arms() {
+    assert_eq!(InodeFormat::from_raw(0), InodeFormat::Dev);
+    assert_eq!(InodeFormat::from_raw(1), InodeFormat::Local);
+    assert_eq!(InodeFormat::from_raw(2), InodeFormat::Extents);
+    assert_eq!(InodeFormat::from_raw(3), InodeFormat::Btree);
+    assert_eq!(InodeFormat::from_raw(4), InodeFormat::Other(4));
+    assert_eq!(InodeFormat::from_raw(255), InodeFormat::Other(255));
+}
+
+/// Every `FileType` `S_IFMT` decode arm — the oracle images only carry
+/// directories and regular files, so fifo/char/block/symlink/socket/other need
+/// explicit coverage.
+#[test]
+fn file_type_all_arms() {
+    assert_eq!(FileType::from_mode(0o010_000), FileType::Fifo);
+    assert_eq!(FileType::from_mode(0o020_000), FileType::CharDevice);
+    assert_eq!(FileType::from_mode(0o040_000), FileType::Directory);
+    assert_eq!(FileType::from_mode(0o060_000), FileType::BlockDevice);
+    assert_eq!(FileType::from_mode(0o100_000), FileType::Regular);
+    assert_eq!(FileType::from_mode(0o120_000), FileType::Symlink);
+    assert_eq!(FileType::from_mode(0o140_000), FileType::Socket);
+    // 0 has no S_IFMT type bits set -> an unnamed type, carried verbatim.
+    assert_eq!(FileType::from_mode(0o000_644), FileType::Other(0));
+}
 
 /// Unix seconds for the minted corpus's `Mon Jul 13 02:09:28 2026 HKT`
 /// (== `2026-07-12 18:09:28 UTC`), the mtime/ctime/crtime.sec of the root and
@@ -64,7 +93,7 @@ fn v5_root_inode_matches_oracle() {
     assert_eq!(inode.magic, 0x494e, "di_magic 'IN'");
     assert_eq!(inode.version, 3, "v5 -> v3 core");
     assert_eq!(inode.format, InodeFormat::Local, "core.format = 1 (local)");
-    assert_eq!(inode.mode, 0o040755, "core.mode");
+    assert_eq!(inode.mode, 0o040_755, "core.mode");
     assert_eq!(
         inode.file_type(),
         FileType::Directory,
@@ -129,7 +158,7 @@ fn v5_big_bin_inode_matches_oracle() {
         InodeFormat::Extents,
         "core.format = 2 (extents)"
     );
-    assert_eq!(inode.mode, 0o100600, "core.mode (regular file)");
+    assert_eq!(inode.mode, 0o100_600, "core.mode (regular file)");
     assert_eq!(inode.file_type(), FileType::Regular, "regular file");
     assert!(inode.is_reg());
     assert_eq!(inode.size, 16_777_216, "core.size == 16 MiB");
@@ -160,7 +189,7 @@ fn v4_root_inode_matches_oracle() {
     assert_eq!(inode.magic, 0x494e, "di_magic");
     assert_eq!(inode.version, 2, "v4 -> v2 core (256-byte inode)");
     assert_eq!(inode.format, InodeFormat::Local, "core.format = 1 (local)");
-    assert_eq!(inode.mode, 0o040755, "core.mode");
+    assert_eq!(inode.mode, 0o040_755, "core.mode");
     assert_eq!(inode.file_type(), FileType::Directory, "root directory");
     assert_eq!(inode.size, 6, "core.size");
     assert_eq!(inode.nextents, 0, "core.nextents");
@@ -192,11 +221,11 @@ fn v4_root_inode_matches_oracle() {
 
 /// Build a minimal v3 inode buffer with a chosen flags2 and one timestamp, to
 /// exercise both decode branches independent of the image. Offsets follow
-/// `struct xfs_dinode`: di_atime @32, di_flags2 @120 (v3 tail).
+/// `struct xfs_dinode`: `di_atime` @32, `di_flags2` @120 (v3 tail).
 fn craft_inode(version: u8, flags2: u64, atime_raw: u64) -> Vec<u8> {
     let mut d = vec![0u8; 512];
     d[0..2].copy_from_slice(&0x494eu16.to_be_bytes()); // magic
-    d[2..4].copy_from_slice(&0o100644u16.to_be_bytes()); // mode: regular file
+    d[2..4].copy_from_slice(&0o100_644_u16.to_be_bytes()); // mode: regular file
     d[4] = version;
     d[5] = 2; // format = extents
     d[32..40].copy_from_slice(&atime_raw.to_be_bytes()); // di_atime
@@ -227,7 +256,8 @@ fn bigtime_decode_branch() {
 fn legacy_decode_branch_v3_without_bigtime() {
     // A v3 inode WITHOUT the bigtime flag takes the legacy (sec:i32, nsec:i32)
     // path: high 32 bits = signed seconds, low 32 = nanoseconds.
-    let raw: u64 = ((1_783_879_768u64) << 32) | 71_649_000u64;
+    // High 32 = seconds, low 32 = nanoseconds (disjoint fields, so `+` == `|`).
+    let raw: u64 = (1_783_879_768_u64 << 32) + 71_649_000_u64;
     let d = craft_inode(3, 0x0, raw);
     let inode = Inode::parse(&d).expect("crafted v3 legacy inode parses");
     assert!(!inode.is_bigtime());
@@ -240,7 +270,7 @@ fn legacy_negative_seconds_pre_epoch() {
     // Legacy seconds are SIGNED i32 — a pre-1970 timestamp must decode negative,
     // not as a huge unsigned value.
     let secs: i32 = -100;
-    let raw: u64 = ((secs as u32 as u64) << 32) | 500u64;
+    let raw: u64 = (u64::from(secs as u32) << 32) + 500_u64;
     let d = craft_inode(2, 0, raw);
     let inode = Inode::parse(&d).expect("parses");
     assert_eq!(inode.atime.secs, -100, "negative legacy seconds");
