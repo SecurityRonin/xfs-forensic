@@ -17,9 +17,13 @@
 #![forbid(unsafe_code)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
+mod agheaders;
 pub mod bytes;
 mod error;
 mod superblock;
 
+pub use agheaders::{
+    Agf, Agfl, Agi, XFS_AGFL_MAGIC, XFS_AGF_MAGIC, XFS_AGI_MAGIC, XFS_AGI_UNLINKED_BUCKETS,
+};
 pub use error::XfsError;
 pub use superblock::{InodeLocation, Superblock, XFS_SB_MAGIC};
