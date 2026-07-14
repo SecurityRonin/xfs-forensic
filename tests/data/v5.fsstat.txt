@@ -1,0 +1,2 @@
+Possible encryption detected (High entropy (8.00))
+fsstat failed for v5
