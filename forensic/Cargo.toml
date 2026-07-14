@@ -1,0 +1,22 @@
+[package]
+name = "xfs-forensic"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Forensic anomaly auditor for XFS — deleted-inode recovery, directory-slack residue, v5 CRC/self-describing integrity as graded report::Finding, built on xfs-core"
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/xfs-forensic"
+readme.workspace = true
+authors.workspace = true
+keywords = ["forensics", "xfs", "dfir", "carving", "anti-forensics"]
+categories.workspace = true
+
+[dependencies]
+xfs-core = { workspace = true }
+# XFS structure knowledge + the shared report model (Severity/Observation).
+forensicnomicon = { workspace = true }
+
+[lints]
+workspace = true

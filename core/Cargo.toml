@@ -1,0 +1,32 @@
+[package]
+name = "xfs-core"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Pure-Rust from-scratch XFS filesystem reader — superblock, AG headers, inodes, extents, directories, over any Read + Seek source"
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/xfs-core"
+readme.workspace = true
+authors.workspace = true
+keywords = ["forensics", "xfs", "filesystem", "dfir", "parser"]
+categories.workspace = true
+# Integration tests live under /tests and read fixtures from the repo-root
+# tests/data via include_bytes!/env-gated paths, outside this package. They are
+# repo-CI artifacts, not consumer-facing — excluding them keeps the published
+# tarball self-contained.
+exclude = ["/fuzz", "/.github", "/docs", "/tests"]
+
+# The bare `xfs` crate name on crates.io is an abandoned 2016 perf-data parser
+# (unrelated to the filesystem, not popular), so we take the import path `xfs`.
+[lib]
+name = "xfs"
+
+[dependencies]
+thiserror = { workspace = true }
+# CRC32c verification for v5 self-describing metadata blocks.
+crc = { workspace = true }
+
+[lints]
+workspace = true

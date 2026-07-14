@@ -1,0 +1,6 @@
+/target
+
+# Large minted XFS oracle images are gitignored (512M each) — only the oracle
+# TEXT outputs and tests/data/README.md provenance are committed. Re-mint from
+# the recorded mkfs/populate commands.
+/tests/data/*.img
