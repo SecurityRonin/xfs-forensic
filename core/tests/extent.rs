@@ -37,10 +37,15 @@ fn image_path(env: &str, default_name: &str) -> Option<PathBuf> {
 }
 
 fn sha256_hex(data: &[u8]) -> String {
+    use std::fmt::Write as _;
     let mut h = Sha256::new();
     h.update(data);
     let digest = h.finalize();
-    digest.iter().map(|b| format!("{b:02x}")).collect()
+    let mut s = String::with_capacity(64);
+    for b in digest {
+        let _ = write!(s, "{b:02x}");
+    }
+    s
 }
 
 // -------------------------------------------------------------------------
@@ -49,8 +54,8 @@ fn sha256_hex(data: &[u8]) -> String {
 
 /// Pack the four logical fields into the on-disk 16-byte record, mirroring the
 /// kernel layout so the test proves the *decoder* inverts a known encoding:
-///   l0 = [flag:1 | startoff:54 | startblock_hi:9]  (bits 63 | 62..9 | 8..0)
-///   l1 = [startblock_lo:43 | blockcount:21]        (bits 63..21 | 20..0)
+/// `l0 = [flag:1 | startoff:54 | startblock_hi:9]` (bits 63 | 62..9 | 8..0);
+/// `l1 = [startblock_lo:43 | blockcount:21]` (bits 63..21 | 20..0).
 fn pack(startoff: u64, startblock: u64, blockcount: u64, unwritten: bool) -> [u8; 16] {
     let flag = u64::from(unwritten);
     let sb_hi = (startblock >> 43) & ((1 << 9) - 1);
@@ -90,9 +95,8 @@ fn unpack_proves_startblock_split_across_both_words() {
     // A startblock whose value straddles the l0:0-8 / l1:21-63 boundary: the
     // top 9 bits are non-zero AND the low 43 bits are non-zero, so an inverted
     // split (swapping hi/lo) yields a *different* number and fails here.
-    // startblock = (0x1AB << 43) | 0x1234_5678_9AB
-    let hi: u64 = 0x1AB; // 9 bits
-    let lo: u64 = 0x1234_5678_9AB & ((1 << 43) - 1); // 43 bits
+    let hi: u64 = 0x1AB; // 9-bit high part
+    let lo: u64 = 0x0023_4567_89AB & ((1 << 43) - 1); // 43-bit low part
     let startblock = (hi << 43) | lo;
     let startoff = 0x2A_BCDE; // an arbitrary 54-bit-range value
     let blockcount = 0x0015_5555; // 21-bit value
@@ -230,7 +234,7 @@ fn read_file_sparse_hole_zero_fills() {
 
     let data_a = vec![0xAAu8; blocksize];
     let data_c = vec![0xCCu8; blocksize];
-    img[1 * blocksize..2 * blocksize].copy_from_slice(&data_a);
+    img[blocksize..2 * blocksize].copy_from_slice(&data_a);
     img[3 * blocksize..4 * blocksize].copy_from_slice(&data_c);
 
     let sb = Superblock::parse(&img).expect("min sb parses");
@@ -253,6 +257,46 @@ fn read_file_sparse_hole_zero_fills() {
         &out[2 * blocksize..3 * blocksize],
         &data_c[..],
         "logical block 2 = data C"
+    );
+}
+
+#[test]
+fn read_file_extent_past_eof_is_ignored() {
+    // An extent whose logical start is at/after end-of-file contributes no
+    // bytes: the whole file is the (empty) hole. size = 1 block, extent at
+    // logical block 1 (startoff 1) which begins exactly at EOF.
+    let blocksize = 4096usize;
+    let mut img = vec![0u8; blocksize * 8];
+    write_min_sb(&mut img, blocksize as u32);
+    let sb = Superblock::parse(&img).expect("min sb parses");
+
+    let fork = pack(1, 1, 1, false).to_vec(); // startoff 1 == 1 block == size
+    let out = xfs::read_file_from_fork(&img, &sb, &fork, 1, blocksize as u64)
+        .expect("read past-EOF extent");
+    assert_eq!(out.len(), blocksize);
+    assert!(
+        out.iter().all(|&b| b == 0),
+        "past-EOF extent placed nothing"
+    );
+}
+
+#[test]
+fn read_file_extent_outside_image_zero_fills() {
+    // An extent whose PHYSICAL blocks lie beyond the image (corrupt map): the
+    // logical range is left zero-filled rather than over-read or panic.
+    let blocksize = 4096usize;
+    let mut img = vec![0u8; blocksize * 4];
+    write_min_sb(&mut img, blocksize as u32);
+    let sb = Superblock::parse(&img).expect("min sb parses");
+
+    // startblock 1000 -> byte 4_096_000, far past the 16 KiB image.
+    let fork = pack(0, 1000, 1, false).to_vec();
+    let out = xfs::read_file_from_fork(&img, &sb, &fork, 1, blocksize as u64)
+        .expect("out-of-image extent must not panic");
+    assert_eq!(out.len(), blocksize);
+    assert!(
+        out.iter().all(|&b| b == 0),
+        "unreadable extent -> zero-filled"
     );
 }
 
