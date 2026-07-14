@@ -4,6 +4,7 @@
 //! secondaries are backups). Field offsets follow the kernel on-disk struct
 //! `struct xfs_dsb` in `fs/xfs/libxfs/xfs_format.h`; `XFSLABEL_MAX = 12`.
 
+use crate::bytes::{be_u16, be_u32, be_u64, u8_at};
 use crate::error::XfsError;
 
 /// The XFS superblock magic number, ASCII `"XFSB"` at byte 0.
@@ -56,11 +57,47 @@ impl Superblock {
     /// - [`XfsError::BadMagic`] if byte 0 is not `XFSB` — the four offending
     ///   bytes are carried in the error.
     pub fn parse(data: &[u8]) -> Result<Self, XfsError> {
-        // RED stub — replaced in the GREEN commit.
-        Err(XfsError::Truncated {
-            structure: "superblock",
-            need: SB_MIN_LEN,
-            have: data.len(),
+        // Validate magic before length so a wrong-image identity error names the
+        // offending bytes even on a short buffer (fail loud with the value).
+        let bytes = [
+            u8_at(data, 0),
+            u8_at(data, 1),
+            u8_at(data, 2),
+            u8_at(data, 3),
+        ];
+        let magic = u32::from_be_bytes(bytes);
+        if magic != XFS_SB_MAGIC {
+            return Err(XfsError::BadMagic {
+                found: magic,
+                bytes,
+            });
+        }
+
+        // All parsed fields lie within the first SB_MIN_LEN bytes; range-check
+        // once so the bounds-checked readers below never mask a short image.
+        if data.len() < SB_MIN_LEN {
+            return Err(XfsError::Truncated {
+                structure: "superblock",
+                need: SB_MIN_LEN,
+                have: data.len(),
+            });
+        }
+
+        // Offsets from `struct xfs_dsb` (fs/xfs/libxfs/xfs_format.h),
+        // XFSLABEL_MAX = 12.
+        Ok(Self {
+            magic,
+            blocksize: be_u32(data, 4),
+            rootino: be_u64(data, 56),
+            agblocks: be_u32(data, 84),
+            agcount: be_u32(data, 88),
+            versionnum: be_u16(data, 100),
+            inodesize: be_u16(data, 104),
+            inopblock: be_u16(data, 106),
+            blocklog: u8_at(data, 120),
+            inodelog: u8_at(data, 122),
+            inopblog: u8_at(data, 123),
+            agblklog: u8_at(data, 124),
         })
     }
 

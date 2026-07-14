@@ -118,6 +118,15 @@ fn truncated_buffer_does_not_panic() {
 
 #[test]
 fn empty_buffer_does_not_panic() {
+    // An empty buffer reads magic 0 (all bytes out of range), so identity
+    // validation rejects it as BadMagic before any length check — the correct
+    // fail-loud order (name what it is, not merely that it is short).
     let err = Superblock::parse(&[]).unwrap_err();
-    assert!(matches!(err, xfs::XfsError::Truncated { .. }));
+    match err {
+        xfs::XfsError::BadMagic { found, bytes } => {
+            assert_eq!(found, 0);
+            assert_eq!(bytes, [0, 0, 0, 0]);
+        }
+        other => panic!("expected BadMagic for empty buffer, got {other:?}"),
+    }
 }
