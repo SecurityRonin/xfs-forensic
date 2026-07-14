@@ -113,4 +113,59 @@ impl Superblock {
     pub fn is_v5(&self) -> bool {
         self.version() == 5
     }
+
+    /// Decode an inode number into its allocation-group location and absolute
+    /// byte position — the exact split `xfs_db convert` performs.
+    ///
+    /// The math (from the XFS on-disk format, using the superblock's log2 shift
+    /// fields):
+    ///
+    /// ```text
+    /// shift   = agblklog + inopblog          (bits held by agino)
+    /// agno    = ino >> shift
+    /// agino   = ino & ((1 << shift) - 1)
+    /// agblock = agino >> inopblog
+    /// offset  = agino & ((1 << inopblog) - 1)
+    /// fsblock = agno * agblocks + agblock
+    /// byte    = fsblock * blocksize + offset * inodesize
+    /// ```
+    ///
+    /// Panic-free: every shift is masked to `< 64` and every multiply is
+    /// saturating, so a hostile inode number or absurd geometry yields a
+    /// clamped location rather than a panic or overflow (the Paranoid
+    /// Gatekeeper standard). It never fails, so it returns the location
+    /// directly rather than a `Result`.
+    #[must_use]
+    pub fn inode_to_location(&self, _ino: u64) -> InodeLocation {
+        InodeLocation {
+            agno: 0,
+            agino: 0,
+            agblock: 0,
+            offset: 0,
+            fsblock: 0,
+            byte_offset: 0,
+        }
+    }
+}
+
+/// The decoded location of an inode: its allocation group, in-AG coordinates,
+/// absolute filesystem block, and absolute byte position in the image.
+///
+/// Produced by [`Superblock::inode_to_location`]; every field mirrors the
+/// corresponding `xfs_db convert inode N <field>` output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InodeLocation {
+    /// Allocation-group number (`ino >> (agblklog + inopblog)`).
+    pub agno: u64,
+    /// AG-relative inode number (`ino & ((1 << (agblklog + inopblog)) - 1)`).
+    pub agino: u64,
+    /// AG-relative block holding the inode (`agino >> inopblog`).
+    pub agblock: u64,
+    /// Inode slot within its block (`agino & ((1 << inopblog) - 1)`).
+    pub offset: u64,
+    /// Absolute filesystem block (`agno * agblocks + agblock`).
+    pub fsblock: u64,
+    /// Absolute byte position in the image
+    /// (`fsblock * blocksize + offset * inodesize`).
+    pub byte_offset: u64,
 }

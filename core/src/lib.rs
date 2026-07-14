@@ -22,4 +22,4 @@ mod error;
 mod superblock;
 
 pub use error::XfsError;
-pub use superblock::{Superblock, XFS_SB_MAGIC};
+pub use superblock::{InodeLocation, Superblock, XFS_SB_MAGIC};
