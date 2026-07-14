@@ -31,4 +31,27 @@ pub enum XfsError {
         /// The four raw bytes at offset 0.
         bytes: [u8; 4],
     },
+
+    /// A directory used a format this reader does not yet handle (leaf / node /
+    /// btree), or a block directory carried an unrecognized data-block magic.
+    ///
+    /// Fail-loud rather than return an empty listing: `detail` names the format
+    /// and the offending value (magic bytes / size), so the investigator sees
+    /// *what* could not be read, never a silently-empty directory.
+    #[error("unsupported directory: {detail}")]
+    UnsupportedDir {
+        /// Human description naming the format and the offending value.
+        detail: String,
+    },
+
+    /// A path component did not resolve during [`crate::read_by_path`]: the named
+    /// component was not found in its parent directory, or a non-final component
+    /// was not itself a directory. Carries the offending path and component.
+    #[error("path not found: component {component:?} of {path:?} did not resolve")]
+    PathNotFound {
+        /// The full path being resolved.
+        path: String,
+        /// The specific component that failed to resolve.
+        component: String,
+    },
 }

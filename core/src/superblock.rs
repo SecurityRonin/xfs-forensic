@@ -12,8 +12,16 @@ use crate::inode::Inode;
 pub const XFS_SB_MAGIC: u32 = 0x5846_5342;
 
 /// Minimum bytes required to parse every field this reader extracts
-/// (through `sb_agblklog` at offset 124).
-const SB_MIN_LEN: usize = 125;
+/// (through `sb_features_incompat` at offset 216, +4 = 220).
+const SB_MIN_LEN: usize = 220;
+
+/// `XFS_SB_VERSION2_FTYPE` — the v4 `sb_features2` bit that turns on the
+/// directory-entry `ftype` field.
+const XFS_SB_VERSION2_FTYPE: u32 = 0x0000_0200;
+
+/// `XFS_SB_FEAT_INCOMPAT_FTYPE` — the v5 `sb_features_incompat` bit for the same
+/// per-dirent `ftype` field.
+const XFS_SB_FEAT_INCOMPAT_FTYPE: u32 = 0x0000_0001;
 
 /// Parsed XFS superblock — geometry and the log2 shift fields the inode-number
 /// decode (P1) needs.
@@ -47,6 +55,12 @@ pub struct Superblock {
     pub inopblog: u8,
     /// `sb_agblklog` (offset 124) — log2 of `agblocks` (rounded up).
     pub agblklog: u8,
+    /// `sb_features2` (offset 200) — v4 extended feature flags; the FTYPE bit
+    /// (`0x200`) here says v4 directory entries carry the trailing `ftype` byte.
+    pub features2: u32,
+    /// `sb_features_incompat` (offset 216) — v5 incompatible feature flags; the
+    /// FTYPE bit (`0x1`) here is the v5 equivalent of the `features2` FTYPE bit.
+    pub features_incompat: u32,
 }
 
 impl Superblock {
@@ -99,7 +113,26 @@ impl Superblock {
             inodelog: u8_at(data, 122),
             inopblog: u8_at(data, 123),
             agblklog: u8_at(data, 124),
+            features2: be_u32(data, 200),
+            features_incompat: be_u32(data, 216),
         })
+    }
+
+    /// True if the filesystem's `ftype` feature is enabled — i.e. every
+    /// directory entry (short-form and block) carries a trailing `ftype` byte.
+    ///
+    /// The bit lives in a different field per format: v5 uses
+    /// `sb_features_incompat & XFS_SB_FEAT_INCOMPAT_FTYPE`; v4 uses
+    /// `sb_features2 & XFS_SB_VERSION2_FTYPE`. Modern `mkfs.xfs` enables it by
+    /// default even on v4, so a directory reader MUST branch on this feature bit
+    /// rather than on the v4/v5 version (the classic off-by-one source).
+    #[must_use]
+    pub fn has_ftype(&self) -> bool {
+        if self.is_v5() {
+            self.features_incompat & XFS_SB_FEAT_INCOMPAT_FTYPE != 0
+        } else {
+            self.features2 & XFS_SB_VERSION2_FTYPE != 0
+        }
     }
 
     /// The on-disk format version: `4` (legacy) or `5` (self-describing/CRC),
