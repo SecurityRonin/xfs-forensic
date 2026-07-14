@@ -136,15 +136,56 @@ impl Superblock {
     /// Gatekeeper standard). It never fails, so it returns the location
     /// directly rather than a `Result`.
     #[must_use]
-    pub fn inode_to_location(&self, _ino: u64) -> InodeLocation {
+    pub fn inode_to_location(&self, ino: u64) -> InodeLocation {
+        let inopblog = u32::from(self.inopblog);
+        let agino_bits = u32::from(self.agblklog) + inopblog;
+
+        // agno takes the high bits, agino the low `agino_bits`. A shift >= 64
+        // (malformed geometry) means agino holds the whole value and agno is 0.
+        let agno = shr(ino, agino_bits);
+        let agino = ino & low_mask(agino_bits);
+
+        // Split agino into (agblock, offset) on the inopblog boundary.
+        let agblock = shr(agino, inopblog);
+        let offset = agino & low_mask(inopblog);
+
+        // fsblock = agno * agblocks + agblock; saturate so absurd geometry can
+        // never overflow (a hostile ino must yield a clamped value, not UB).
+        let fsblock = agno
+            .saturating_mul(u64::from(self.agblocks))
+            .saturating_add(agblock);
+
+        // byte = fsblock * blocksize + offset * inodesize (saturating).
+        let byte_offset = fsblock
+            .saturating_mul(u64::from(self.blocksize))
+            .saturating_add(offset.saturating_mul(u64::from(self.inodesize)));
+
         InodeLocation {
-            agno: 0,
-            agino: 0,
-            agblock: 0,
-            offset: 0,
-            fsblock: 0,
-            byte_offset: 0,
+            agno,
+            agino,
+            agblock,
+            offset,
+            fsblock,
+            byte_offset,
         }
+    }
+}
+
+/// Right-shift that yields `0` when `bits >= 64` (rather than panicking on an
+/// out-of-range shift — a malformed superblock can carry shift fields >= 64).
+#[inline]
+fn shr(value: u64, bits: u32) -> u64 {
+    value.checked_shr(bits).unwrap_or(0)
+}
+
+/// A mask of the low `bits` bits: `(1 << bits) - 1`, saturating to all-ones
+/// when `bits >= 64` so the mask never overflows.
+#[inline]
+fn low_mask(bits: u32) -> u64 {
+    if bits >= 64 {
+        u64::MAX
+    } else {
+        (1u64 << bits) - 1
     }
 }
 

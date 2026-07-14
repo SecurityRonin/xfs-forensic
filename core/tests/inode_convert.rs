@@ -73,20 +73,28 @@ fn v5_convert_matches_oracle() {
         return;
     };
 
-    // v5.convert_root.txt:  agno 0, agino 64, agblock 8, offset 0
-    //   (root file has no fsblock line; fsblock = 0*32768 + 8 = 8).
-    assert_loc(&sb, 128, 0, 64, 8, 0, 8);
+    // v5.convert_root.txt:  agno 0, agino 64, agblock 8, offset 0 — this is
+    //   `xfs_db convert inode 64` (the historically-quoted rootino), so it
+    //   anchors ino 64, not the real rootino 128 (no fsblock line;
+    //   fsblock = 0*32768 + 8 = 8).
+    assert_loc(&sb, 64, 0, 64, 8, 0, 8);
+
+    // The real rootino is 128 (sb.rootino) -> agno 0, agino 128, agblock 16,
+    //   offset 0, fsblock 16 (derived from the same geometry; cross-checked by
+    //   v5.inode128.txt reading exactly byte 16*4096 = 65536).
+    assert_eq!(sb.rootino, 128, "minted rootino");
+    assert_loc(&sb, 128, 0, 128, 16, 0, 16);
 
     // v5.convert_big.txt:   agno 0, agino 135, agblock 16, offset 7, fsblock 16.
     assert_loc(&sb, 135, 0, 135, 16, 7, 16);
 
     // v5.convert_agspan.txt (ino 262272): agno 1, agino 128, agblock 16,
     //   offset 0, fsblock 32784.
-    assert_loc(&sb, 262272, 1, 128, 16, 0, 32784);
+    assert_loc(&sb, 262_272, 1, 128, 16, 0, 32_784);
 
     // v5.convert_agspan.txt (ino 655488): agno 2, agino 131200, agblock 16400,
     //   offset 0, fsblock 81936.
-    assert_loc(&sb, 655488, 2, 131200, 16400, 0, 81936);
+    assert_loc(&sb, 655_488, 2, 131_200, 16_400, 0, 81_936);
 }
 
 #[test]
@@ -154,9 +162,22 @@ fn huge_ino_does_not_panic() {
     // shift = 15 + 3 = 18; agno = MAX >> 18; agino = low 18 bits (all set).
     assert_eq!(loc.agno, u64::MAX >> 18);
     assert_eq!(loc.agino, (1u64 << 18) - 1);
-    // fsblock = agno*32768 + agblock would overflow u64 -> saturates.
-    assert_eq!(loc.fsblock, u64::MAX, "fsblock saturates rather than wraps");
-    assert_eq!(loc.byte_offset, u64::MAX, "byte_offset saturates");
+    // agno * 32768 (+ agblock) still fits in u64, so fsblock does NOT saturate;
+    // it multiplies out exactly. byte = fsblock * 4096 + 7*512 DOES overflow,
+    // so byte_offset saturates to u64::MAX.
+    let agno = u64::MAX >> 18;
+    let agino = (1u64 << 18) - 1;
+    let agblock = agino >> 3;
+    let fsblock = agno * 32768 + agblock;
+    assert_eq!(
+        loc.fsblock, fsblock,
+        "fsblock computed exactly (no overflow)"
+    );
+    assert_eq!(
+        loc.byte_offset,
+        u64::MAX,
+        "byte_offset saturates on overflow"
+    );
 }
 
 #[test]
