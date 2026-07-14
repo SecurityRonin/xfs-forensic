@@ -1,10 +1,13 @@
-//! Directory parsing — short-form and block directories (P4).
+//! Directory parsing — short-form, block, leaf/node, and btree directories.
 //!
-//! This module turns the two most common XFS directory formats into a flat
-//! `Vec<DirEntry>` and composes them into the real forensic entrypoint,
-//! [`read_by_path`]. Leaf / node / btree directories are deferred (P4b/P5): a
-//! directory in one of those formats fails LOUD with [`XfsError::UnsupportedDir`]
-//! naming the format, never a silent empty listing.
+//! This module turns every XFS directory format into a flat `Vec<DirEntry>` and
+//! composes them into the real forensic entrypoint, [`read_by_path`]:
+//! short-form (P4), single-block (P4), and — added in P5 — the multi-block
+//! leaf/node directories (walk the `XDD3`/`XD2D` DATA blocks) and btree-format
+//! directories (collect the dir-block map from a bmap B+tree, then walk its data
+//! blocks). A directory whose data-fork format is not a real directory layout
+//! (`Dev`/`Other`) fails LOUD with [`XfsError::UnsupportedDir`] naming the
+//! format, never a silent empty listing.
 //!
 //! ## The two formats
 //!
@@ -54,20 +57,39 @@
 //! enables it by default even on v4, so this reader branches on the feature bit,
 //! never on the v4/v5 version — the classic off-by-one this module guards.
 
+use crate::btree::read_btree_extents;
 use crate::bytes::{be_u16, be_u32, be_u64, u8_at};
 use crate::error::XfsError;
+use crate::extent::{read_extents, BmbtRec};
 use crate::inode::{Inode, InodeFormat};
 use crate::superblock::Superblock;
 
-/// The v5 block-directory data-block magic (`XFS_DIR3_BLOCK_MAGIC`, `"XDB3"`).
+/// The v5 single-block directory data-block magic (`XFS_DIR3_BLOCK_MAGIC`,
+/// `"XDB3"`).
 pub const XFS_DIR3_BLOCK_MAGIC: u32 = 0x5844_4233;
-/// The v4 block-directory data-block magic (`XFS_DIR2_BLOCK_MAGIC`, `"XD2B"`).
+/// The v4 single-block directory data-block magic (`XFS_DIR2_BLOCK_MAGIC`,
+/// `"XD2B"`).
 pub const XFS_DIR2_BLOCK_MAGIC: u32 = 0x5844_3242;
+/// The v5 multi-block directory data-block magic (`XFS_DIR3_DATA_MAGIC`,
+/// `"XDD3"`). A leaf/node directory's DATA blocks carry this (distinct from the
+/// single-block `XDB3`) and, unlike a single block, have NO block tail.
+pub const XFS_DIR3_DATA_MAGIC: u32 = 0x5844_4433;
+/// The v4 multi-block directory data-block magic (`XFS_DIR2_DATA_MAGIC`,
+/// `"XD2D"`).
+pub const XFS_DIR2_DATA_MAGIC: u32 = 0x5844_3244;
 
 /// The `xfs_dir3_data_hdr` (v5) header length preceding the first data entry.
 const DIR3_DATA_HDR_LEN: usize = 64;
 /// The `xfs_dir2_data_hdr` (v4) header length preceding the first data entry.
 const DIR2_DATA_HDR_LEN: usize = 16;
+
+/// The directory-block byte offset at which the leaf/hash address space begins
+/// (`XFS_DIR2_LEAF_OFFSET = 1 << (32 + XFS_DIR2_DATA_ALIGN_LOG=3) = 1 << 35`).
+/// A directory's DATA blocks live in the byte range `[0, this)`; leaf and
+/// freeindex blocks live at or above it, so an extent whose logical (directory)
+/// byte offset is below this boundary holds file entries, and one at/above it
+/// is a hash/index block skipped when listing.
+const XFS_DIR2_LEAF_OFFSET: u64 = 1 << 35;
 /// The `xfs_dir2_block_tail` size (`count: u32`, `stale: u32`) at the block end.
 const BLOCK_TAIL_LEN: usize = 8;
 /// Each `xfs_dir2_leaf_entry` in the block tail's leaf array is 8 bytes.
@@ -202,11 +224,59 @@ pub fn read_block_dir(block: &[u8], has_ftype: bool) -> Result<Vec<DirEntry>, Xf
     // range is never inverted (yielding an empty listing, not a panic).
     let region_end = leaf_start.max(hdr_len).min(blocksize);
 
+    Ok(walk_data_entries(block, hdr_len, region_end, has_ftype))
+}
+
+/// Parse a MULTI-block directory data block (`XDD3` v5 / `XD2D` v4) from its raw
+/// bytes.
+///
+/// Unlike a single block, a multi-block data block has **no block tail** — the
+/// leaf/hash index lives in separate blocks (above [`XFS_DIR2_LEAF_OFFSET`]), so
+/// the data entries run from the header end to the end of the block. The entry
+/// records are identical to the single-block format (`xfs_dir2_data_entry`), so
+/// the same [`walk_data_entries`] walker is reused with the region end set to
+/// the full block length.
+///
+/// `has_ftype` selects the per-entry ftype byte. Bounds-stopping and panic-free.
+///
+/// # Errors
+///
+/// [`XfsError::UnsupportedDir`] if the magic is neither `XDD3` (v5) nor `XD2D`
+/// (v4) — the offending magic bytes are named in the error. (The single-block
+/// magics `XDB3`/`XD2B` are handled by [`read_block_dir`], not here.)
+pub fn read_data_dir_block(block: &[u8], has_ftype: bool) -> Result<Vec<DirEntry>, XfsError> {
+    let magic = be_u32(block, 0);
+    let hdr_len = match magic {
+        XFS_DIR3_DATA_MAGIC => DIR3_DATA_HDR_LEN,
+        XFS_DIR2_DATA_MAGIC => DIR2_DATA_HDR_LEN,
+        other => {
+            return Err(XfsError::UnsupportedDir {
+                detail: format!(
+                    "leaf/node directory data block: unrecognized data-block magic \
+                     {other:#010x} (bytes {:02x?}), expected XDD3 (0x58444433) or \
+                     XD2D (0x58443244)",
+                    &block.get(0..4).unwrap_or(&[])
+                ),
+            });
+        }
+    };
+    // No block tail: entries fill `[hdr_len .. blocksize)`. A block shorter than
+    // the header yields an empty walk (start > end), never a panic.
+    Ok(walk_data_entries(block, hdr_len, block.len(), has_ftype))
+}
+
+/// Walk `xfs_dir2_data_entry` records in `[start .. end)` of a directory data
+/// block, skipping `xfs_dir2_data_unused` (freetag `0xFFFF`) records.
+///
+/// Shared by the single-block ([`read_block_dir`], `end` = the tail's leaf
+/// boundary) and multi-block ([`read_data_dir_block`], `end` = block length)
+/// data-block readers — the entry layout is identical; only the stop boundary
+/// differs. Bounds-stopping: an entry running past `end`/the block, or a zero
+/// namelen (zero padding), ends the walk. `align8` guarantees forward progress.
+fn walk_data_entries(block: &[u8], start: usize, end: usize, has_ftype: bool) -> Vec<DirEntry> {
     let mut entries = Vec::new();
-    let mut off = hdr_len;
-    // Each iteration advances `off` by at least the minimum record size, so the
-    // loop always terminates; the explicit bound is a belt-and-suspenders guard.
-    while off + 3 <= region_end {
+    let mut off = start;
+    while off + 3 <= end {
         // A data-unused record starts with the freetag 0xFFFF in the first two
         // bytes (the inumber's high half can never be 0xFFFF for a real entry).
         if be_u16(block, off) == DATA_FREE_TAG {
@@ -248,26 +318,32 @@ pub fn read_block_dir(block: &[u8], has_ftype: bool) -> Result<Vec<DirEntry>, Xf
         let raw = 8 + 1 + namelen + ftype_len + 2;
         off = off.saturating_add(align8(raw));
     }
-
-    Ok(entries)
+    entries
 }
 
 impl Superblock {
     /// List a directory inode's entries, dispatching on its on-disk format.
     ///
-    /// Handles the two most common formats:
+    /// Handles every directory format XFS uses:
     /// - **short-form** ([`InodeFormat::Local`]) — parsed from the inode's inline
     ///   data fork;
     /// - **block** ([`InodeFormat::Extents`] with `size == blocksize`) — the
-    ///   single directory block read via the inode's one extent.
+    ///   single directory block (`XDB3`/`XD2B`) read via the inode's one extent;
+    /// - **leaf / node** ([`InodeFormat::Extents`] with `size > blocksize`) —
+    ///   the multiple `XDD3`/`XD2D` DATA blocks are walked and concatenated; the
+    ///   leaf/hash + freeindex index blocks (above the `XFS_DIR2_LEAF_OFFSET`
+    ///   address-space boundary) are skipped, since listing needs only the data;
+    /// - **btree** ([`InodeFormat::Btree`]) — the dir-block map itself is a bmap
+    ///   B+tree; its extents are collected ([`read_btree_extents`]) and the data
+    ///   blocks walked exactly as the leaf/node case.
     ///
     /// # Errors
     ///
-    /// - [`XfsError::UnsupportedDir`] — a leaf / node / btree directory (a
-    ///   multi-block `Extents` dir, or a `Btree` dir), or an unrecognized
-    ///   block-directory magic. The error NAMES the format/value (fail loud).
-    /// - [`XfsError::Truncated`] — the directory block extent lies outside the
-    ///   image (propagated from the file read).
+    /// - [`XfsError::UnsupportedDir`] — a directory inode whose data-fork format
+    ///   is `Dev`/`Other` (not a real directory layout), or a block whose magic
+    ///   is unrecognized. The error NAMES the format/value (fail loud).
+    /// - [`XfsError::Truncated`] — the single directory block extent lies outside
+    ///   the image (propagated from the file read).
     pub fn read_dir(&self, image: &[u8], inode: &Inode) -> Result<Vec<DirEntry>, XfsError> {
         match inode.format {
             InodeFormat::Local => Ok(read_shortform_dir(&inode.data_fork, self.has_ftype())),
@@ -279,19 +355,74 @@ impl Superblock {
                     let block = self.read_file(image, inode)?;
                     read_block_dir(&block, self.has_ftype())
                 } else {
-                    Err(XfsError::UnsupportedDir {
-                        detail: format!(
-                            "leaf/node directory not yet supported (multi-block \
-                             extents dir: size {} != blocksize {}, {} extents)",
-                            inode.size, blocksize, inode.nextents
-                        ),
-                    })
+                    // Multi-block (leaf / node) directory: the data entries are
+                    // spread across the DATA blocks (logical dir offset below
+                    // XFS_DIR2_LEAF_OFFSET); the leaf/hash + freeindex blocks
+                    // (above the boundary) are a lookup index, not needed to
+                    // list. Decode the inline extent map and walk the data
+                    // blocks. `size == 0` is not a valid directory (every dir
+                    // has at least `.`/`..`), so it falls through to an empty
+                    // listing here rather than a crash.
+                    let recs = read_extents(&inode.data_fork, inode.nextents);
+                    Ok(self.read_multiblock_dir(image, &recs))
                 }
             }
+            InodeFormat::Btree => {
+                // A directory large enough that its dir-block map itself needs a
+                // bmap B+tree: walk the tree (P5 Part 1) for the extent map, then
+                // walk its data blocks exactly as the leaf/node case.
+                let recs = read_btree_extents(image, self, &inode.data_fork)?;
+                Ok(self.read_multiblock_dir(image, &recs))
+            }
             other => Err(XfsError::UnsupportedDir {
-                detail: format!("directory format {other:?} not yet supported (btree/dev/other)"),
+                detail: format!("directory format {other:?} not yet supported (dev/other)"),
             }),
         }
+    }
+
+    /// Walk the DATA blocks of a leaf/node/btree directory given its extent map,
+    /// concatenating every data-block's entries in extent (`startoff`) order.
+    ///
+    /// Only extents whose logical directory byte offset lies below
+    /// [`XFS_DIR2_LEAF_OFFSET`] hold file entries; extents at/above it are the
+    /// leaf/hash and freeindex index blocks, which are skipped when listing.
+    /// Each data extent covers `blockcount` directory blocks (one per filesystem
+    /// block here); each block is read and walked with [`read_data_dir_block`].
+    /// A block whose magic is not a multi-block DATA magic is skipped (an index
+    /// block that happened to fall below the boundary, or slack) rather than
+    /// failing the whole listing — so this collection is infallible (an
+    /// out-of-image or wrong-magic block contributes nothing).
+    fn read_multiblock_dir(&self, image: &[u8], recs: &[BmbtRec]) -> Vec<DirEntry> {
+        let blocksize = self.blocksize as usize;
+        let has_ftype = self.has_ftype();
+        // Logical dir-block boundary: data blocks have startoff below this.
+        let leaf_boundary_block = XFS_DIR2_LEAF_OFFSET / u64::from(self.blocksize).max(1);
+
+        let mut entries = Vec::new();
+        for rec in recs {
+            // Skip leaf/hash/freeindex extents (logical offset at/above the
+            // boundary): they hold no file entries.
+            if rec.startoff >= leaf_boundary_block {
+                continue;
+            }
+            // Each block of this data extent is a directory data block.
+            for b in 0..rec.blockcount {
+                let fsblock = rec.startblock.saturating_add(b);
+                let Some(start) = (fsblock as usize).checked_mul(blocksize) else {
+                    continue; // cov:unreachable: fsblock*blocksize fits usize on 64-bit
+                };
+                let Some(block) = image.get(start..start.saturating_add(blocksize)) else {
+                    continue; // block outside image (corrupt/truncated) — skip
+                };
+                // A DATA block carries a multi-block DATA magic; anything else
+                // (an index block below the boundary, or slack) contributes no
+                // entries.
+                if let Ok(mut es) = read_data_dir_block(block, has_ftype) {
+                    entries.append(&mut es);
+                }
+            }
+        }
+        entries
     }
 }
 

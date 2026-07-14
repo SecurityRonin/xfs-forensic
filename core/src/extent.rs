@@ -28,8 +28,9 @@
 //! every unpacked extent against `xfs_db bmap` and validates the reconstructed
 //! file content against a mount-ro sha256 (the LZNT1-trap this module guards).
 
+use crate::btree::read_btree_extents;
 use crate::error::XfsError;
-use crate::inode::Inode;
+use crate::inode::{Inode, InodeFormat};
 use crate::superblock::Superblock;
 
 /// Bit width of `startoff` (`l0:9-62`).
@@ -143,6 +144,27 @@ pub fn read_file_from_fork(
     nextents: u32,
     size: u64,
 ) -> Result<Vec<u8>, XfsError> {
+    let recs = read_extents(fork, nextents);
+    assemble_extents(image, sb, &recs, size)
+}
+
+/// Reconstruct a file's bytes from an already-decoded extent list.
+///
+/// The shared assembly used by both the inline extent-list path
+/// ([`read_file_from_fork`]) and the bmap-B+tree path
+/// ([`Superblock::read_file`] on a `Btree` inode): copy each extent's blocks
+/// from the image, zero-fill sparse holes, and truncate to `size`.
+///
+/// # Errors
+///
+/// [`XfsError::Truncated`] if `size` exceeds the image length (allocation-bomb
+/// guard — a real file's bytes live within the image).
+pub fn assemble_extents(
+    image: &[u8],
+    sb: &Superblock,
+    recs: &[BmbtRec],
+    size: u64,
+) -> Result<Vec<u8>, XfsError> {
     // Allocation-bomb guard: a genuine file cannot be larger than the image it
     // lives in. Refuse an absurd size rather than trying to allocate it. On a
     // 64-bit target `usize == u64` so the try_from never fails; the guard stays
@@ -162,7 +184,7 @@ pub fn read_file_from_fork(
     // covered by an extent stays zero.
     let mut out = vec![0u8; size];
 
-    for rec in read_extents(fork, nextents) {
+    for rec in recs {
         // Byte window this extent occupies in the OUTPUT (logical position).
         let dst_start = (rec.startoff as usize).saturating_mul(blocksize);
         let ext_bytes = (rec.blockcount as usize).saturating_mul(blocksize);
@@ -193,17 +215,39 @@ pub fn read_file_from_fork(
 }
 
 impl Superblock {
-    /// Reconstruct an extent-list (`di_format == EXTENTS`) file's bytes.
+    /// Reconstruct a file's bytes from its inode, dispatching on the data-fork
+    /// format.
     ///
-    /// Reads the inode's inline extent array (its [`Inode::data_fork`]) and
-    /// assembles the file content, zero-filling sparse holes and truncating to
-    /// the inode's `di_size`.
+    /// - [`InodeFormat::Extents`] — decode the inode's inline extent array (its
+    ///   [`Inode::data_fork`]) directly.
+    /// - [`InodeFormat::Btree`] — walk the inline `xfs_bmdr_block` root and its
+    ///   on-disk bmbt leaf blocks ([`read_btree_extents`]) to collect the full
+    ///   extent map, then assemble from that.
+    ///
+    /// Either way the extents are assembled identically: copy each extent's
+    /// blocks from the image, zero-fill sparse holes, truncate to `di_size`.
+    /// A [`InodeFormat::Local`] inode holds its data inline (not via extents),
+    /// and a [`InodeFormat::Dev`] inode has no file body — both yield an empty
+    /// (fully zero-filled to `di_size`) result via the empty extent list rather
+    /// than misinterpreting the fork as an extent array.
     ///
     /// # Errors
     ///
     /// [`XfsError::Truncated`] if `di_size` exceeds the image length
-    /// (allocation-bomb guard); see [`read_file_from_fork`].
+    /// (allocation-bomb guard); see [`assemble_extents`].
     pub fn read_file(&self, image: &[u8], inode: &Inode) -> Result<Vec<u8>, XfsError> {
-        read_file_from_fork(image, self, &inode.data_fork, inode.nextents, inode.size)
+        match inode.format {
+            InodeFormat::Extents => {
+                read_file_from_fork(image, self, &inode.data_fork, inode.nextents, inode.size)
+            }
+            InodeFormat::Btree => {
+                let recs = read_btree_extents(image, self, &inode.data_fork)?;
+                assemble_extents(image, self, &recs, inode.size)
+            }
+            // Local/Dev/Other: no extent-mapped body. Assemble from an empty
+            // extent list -> a `di_size`-length zero fill (never misread the
+            // inline fork as an extent array).
+            _ => assemble_extents(image, self, &[], inode.size),
+        }
     }
 }

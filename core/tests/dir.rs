@@ -447,13 +447,14 @@ fn read_block_dir_zero_length_free_record_makes_progress() {
 }
 
 #[test]
-fn read_dir_btree_format_is_unsupported_and_names_format() {
-    // A directory inode reported as Btree format is not yet supported: read_dir
-    // must fail loud naming the format (the InodeFormat::Btree/other arm).
+fn read_dir_btree_format_walks_via_bmbt() {
+    // A Btree-format directory is now SUPPORTED (P5 Part 1 supplies its extent
+    // map). A degenerate btree root (empty inline fork -> no leaf ptrs) yields an
+    // empty listing rather than a crash or a loud "unsupported" — the format is
+    // handled, this particular crafted inode simply maps no data blocks.
     use xfs::{Inode, InodeFormat};
     let img = min_sb_bytes();
     let sb = Superblock::parse(&img).unwrap();
-    // Craft a v3 directory inode with di_format = 3 (BTREE).
     let mut ib = vec![0u8; 512];
     ib[0..2].copy_from_slice(&0x494eu16.to_be_bytes()); // "IN"
     ib[2..4].copy_from_slice(&0o040_700u16.to_be_bytes()); // dir mode
@@ -461,11 +462,36 @@ fn read_dir_btree_format_is_unsupported_and_names_format() {
     ib[5] = 3; // di_format = BTREE
     let inode = Inode::parse(&ib).unwrap();
     assert_eq!(inode.format, InodeFormat::Btree);
+    let entries = read_dir(&img, &sb, &inode).expect("btree dir is handled, not a loud fail");
+    assert!(
+        entries.is_empty(),
+        "degenerate empty btree root maps no data blocks -> empty listing"
+    );
+}
+
+#[test]
+fn read_dir_dev_format_is_unsupported_and_names_format() {
+    // A directory inode whose data-fork format is Dev (0) is not a real dir
+    // layout: read_dir must fail loud naming the format (the fall-through arm),
+    // never a silent empty listing.
+    use xfs::{Inode, InodeFormat};
+    let img = min_sb_bytes();
+    let sb = Superblock::parse(&img).unwrap();
+    let mut ib = vec![0u8; 512];
+    ib[0..2].copy_from_slice(&0x494eu16.to_be_bytes()); // "IN"
+    ib[2..4].copy_from_slice(&0o040_700u16.to_be_bytes()); // dir mode
+    ib[4] = 3; // di_version = v3
+    ib[5] = 0; // di_format = DEV
+    let inode = Inode::parse(&ib).unwrap();
+    assert_eq!(inode.format, InodeFormat::Dev);
     match read_dir(&img, &sb, &inode) {
         Err(XfsError::UnsupportedDir { detail }) => {
-            assert!(detail.contains("Btree"), "must name Btree, got: {detail}");
+            assert!(
+                detail.contains("Dev") || detail.contains("dev"),
+                "must name the format, got: {detail}"
+            );
         }
-        other => panic!("btree dir must fail loud, got {other:?}"),
+        other => panic!("dev-format dir must fail loud, got {other:?}"),
     }
 }
 
