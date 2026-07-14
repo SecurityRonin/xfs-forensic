@@ -59,6 +59,7 @@
 
 use crate::btree::read_btree_extents;
 use crate::bytes::{be_u16, be_u32, be_u64, u8_at};
+use crate::crc::{verify_crc, DA3_BLKINFO_CRC_OFF, DIR3_DATA_CRC_OFF};
 use crate::error::XfsError;
 use crate::extent::{read_extents, BmbtRec};
 use crate::inode::{Inode, InodeFormat};
@@ -77,6 +78,20 @@ pub const XFS_DIR3_DATA_MAGIC: u32 = 0x5844_4433;
 /// The v4 multi-block directory data-block magic (`XFS_DIR2_DATA_MAGIC`,
 /// `"XD2D"`).
 pub const XFS_DIR2_DATA_MAGIC: u32 = 0x5844_3244;
+
+/// v5 dir single-block leaf magic (`XFS_DIR3_LEAF1_MAGIC`) — the 16-bit
+/// `xfs_da_blkinfo.magic` at block offset 8 of a v5 leaf/node block.
+const XFS_DIR3_LEAF1_MAGIC: u16 = 0x3df1;
+/// v5 dir multi-block leaf magic (`XFS_DIR3_LEAFN_MAGIC`).
+const XFS_DIR3_LEAFN_MAGIC: u16 = 0x3dff;
+/// v5 da-btree node magic (`XFS_DA3_NODE_MAGIC`).
+const XFS_DA3_NODE_MAGIC: u16 = 0x3ebe;
+/// v4 dir single-block leaf magic (`XFS_DIR2_LEAF1_MAGIC`) — no CRC.
+const XFS_DIR2_LEAF1_MAGIC: u16 = 0xd2f1;
+/// v4 dir multi-block leaf magic (`XFS_DIR2_LEAFN_MAGIC`) — no CRC.
+const XFS_DIR2_LEAFN_MAGIC: u16 = 0xd2ff;
+/// v4 da-btree node magic (`XFS_DA_NODE_MAGIC`) — no CRC.
+const XFS_DA_NODE_MAGIC: u16 = 0xfebe;
 
 /// The `xfs_dir3_data_hdr` (v5) header length preceding the first data entry.
 const DIR3_DATA_HDR_LEN: usize = 64;
@@ -263,6 +278,44 @@ pub fn read_data_dir_block(block: &[u8], has_ftype: bool) -> Result<Vec<DirEntry
     // No block tail: entries fill `[hdr_len .. blocksize)`. A block shorter than
     // the header yields an empty walk (start > end), never a panic.
     Ok(walk_data_entries(block, hdr_len, block.len(), has_ftype))
+}
+
+/// Verify the v5 CRC32c of a directory `block` (data, single-block, leaf, node,
+/// or freeindex), returning `Some(true/false)` on a v5 block and `None` on a v4
+/// block (which carries no CRC).
+///
+/// The CRC field position depends on the block's header kind, detected from its
+/// magic (all VERBATIM from `xfs_da_format.h`):
+///
+/// - **data / single-block** blocks (`xfs_dir3_blk_hdr`) carry a 32-bit magic at
+///   offset 0 — `XDB3`/`XDD3` (v5) → CRC at offset 4; `XD2B`/`XD2D` (v4) → `None`.
+/// - **leaf / node / freeindex** blocks (`xfs_da3_blkinfo`) carry a 16-bit magic
+///   at offset 8 — `0x3df1`/`0x3dff`/`0x3ebe` (v5) → CRC at offset 12; the v4
+///   magics (`0xd2f1`/`0xd2ff`/`0xfebe`) → `None`.
+///
+/// A block whose magic matches none of these is not a directory block this
+/// reader recognizes, so it returns `None` (no CRC claim — never a false
+/// mismatch). **Non-fatal and panic-free**: a short/hostile block that claims a
+/// v5 magic but cannot hold the CRC field verifies as `Some(false)`.
+#[must_use]
+pub fn verify_dir_block_crc(block: &[u8]) -> Option<bool> {
+    // Data / single-block header: 32-bit magic at offset 0.
+    match be_u32(block, 0) {
+        XFS_DIR3_BLOCK_MAGIC | XFS_DIR3_DATA_MAGIC => {
+            return Some(verify_crc(block, DIR3_DATA_CRC_OFF));
+        }
+        XFS_DIR2_BLOCK_MAGIC | XFS_DIR2_DATA_MAGIC => return None,
+        _ => {}
+    }
+    // Leaf / node / freeindex header (`xfs_da_blkinfo`): 16-bit magic at offset 8.
+    match be_u16(block, 8) {
+        XFS_DIR3_LEAF1_MAGIC | XFS_DIR3_LEAFN_MAGIC | XFS_DA3_NODE_MAGIC => {
+            Some(verify_crc(block, DA3_BLKINFO_CRC_OFF))
+        }
+        XFS_DIR2_LEAF1_MAGIC | XFS_DIR2_LEAFN_MAGIC | XFS_DA_NODE_MAGIC => None,
+        // Not a directory block this reader recognizes: no CRC claim.
+        _ => None,
+    }
 }
 
 /// Walk `xfs_dir2_data_entry` records in `[start .. end)` of a directory data

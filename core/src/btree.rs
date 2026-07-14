@@ -46,6 +46,7 @@
 //! panicked on). Records are collected, never the whole tree materialized.
 
 use crate::bytes::{be_u16, be_u32, be_u64};
+use crate::crc::{verify_crc, BMBT_CRC_OFF};
 use crate::error::XfsError;
 use crate::extent::BmbtRec;
 use crate::superblock::Superblock;
@@ -68,6 +69,25 @@ const REC_LEN: usize = 16;
 
 /// The `xfs_bmdr_block` root header length (`bb_level` + `bb_numrecs`).
 const BMDR_HDR_LEN: usize = 4;
+
+/// Verify the v5 CRC32c of an on-disk bmbt `block`, returning `Some(true/false)`
+/// on a v5 (`BMA3`) block and `None` on a v4 (`BMAP`) block (no CRC).
+///
+/// The CRC field (`bb_u.l.bb_crc`) sits at offset 64 inside the 72-byte
+/// long-form CRC header (`XFS_BTREE_LBLOCK_CRC_OFF`, VERBATIM from
+/// `xfs_format.h`), covering the whole block. A block whose 32-bit magic at
+/// offset 0 is neither `BMA3` nor `BMAP` is not a bmbt block, so it returns
+/// `None` (no CRC claim — never a false mismatch). **Non-fatal and panic-free**:
+/// a short/hostile `BMA3` block that cannot hold the CRC field verifies as
+/// `Some(false)`.
+#[must_use]
+pub fn verify_bmbt_block_crc(block: &[u8]) -> Option<bool> {
+    match be_u32(block, 0) {
+        XFS_BMAP_CRC_MAGIC => Some(verify_crc(block, BMBT_CRC_OFF)),
+        XFS_BMAP_MAGIC => None,
+        _ => None,
+    }
+}
 
 /// Maximum bmbt tree depth followed. Real bmbt trees are at most a handful of
 /// levels deep (the fanout is hundreds per block); a claimed depth beyond this

@@ -21,6 +21,7 @@
 //! header at all** — the ring starts at byte 0.
 
 use crate::bytes::{be_u32, u8_at};
+use crate::crc::{crc_status, AGFL_CRC_OFF, AGF_CRC_OFF, AGI_CRC_OFF};
 use crate::error::XfsError;
 
 /// AGF magic — ASCII `"XAGF"`.
@@ -81,6 +82,11 @@ pub struct Agf {
     pub refcount_root: u32,
     /// `agf_refcount_level` — depth of the refcount btree (v5).
     pub refcount_level: u32,
+    /// The v5 CRC32c status of the AGF sector: `Some(true/false)` when parsed via
+    /// [`Self::parse_verified`] on a v5 filesystem, `None` on v4 (no CRC) or when
+    /// parsed via the version-agnostic [`Self::parse`]. **Non-fatal** — a bad CRC
+    /// never fails the parse; the `-forensic` layer turns it into a Finding.
+    pub crc_valid: Option<bool>,
 }
 
 /// The AGI inode-allocation header.
@@ -122,6 +128,11 @@ pub struct Agi {
     pub ino_blocks: u32,
     /// `agi_fblocks` — blocks used by the finobt (v5, inobtcount feature).
     pub fino_blocks: u32,
+    /// The v5 CRC32c status of the AGI sector: `Some(true/false)` when parsed via
+    /// [`Self::parse_verified`] on a v5 filesystem, `None` on v4 (no CRC) or when
+    /// parsed via the version-agnostic [`Self::parse`]. **Non-fatal** — a bad CRC
+    /// never fails the parse; the `-forensic` layer turns it into a Finding.
+    pub crc_valid: Option<bool>,
 }
 
 /// The AGFL free-list block ring.
@@ -139,6 +150,11 @@ pub struct Agfl {
     pub seqno: Option<u32>,
     /// The `bno[]` ring: AG-relative block numbers, `0xffffffff` where empty.
     pub bno: Vec<u32>,
+    /// The v5 CRC32c status of the AGFL sector: `Some(true/false)` from
+    /// [`Self::parse_v5`] (which verifies `agfl_crc` at offset 32 over the whole
+    /// sector), or `None` from [`Self::parse_v4`] (a bare ring with no CRC).
+    /// **Non-fatal** — a bad CRC never fails the parse.
+    pub crc_valid: Option<bool>,
 }
 
 /// Null sentinel for an unused AGFL slot / null AG pointer.
@@ -177,12 +193,31 @@ fn check_magic(data: &[u8], expected: u32) -> Result<u32, XfsError> {
 }
 
 impl Agf {
-    /// Parse an AGF from the start of `data` (the AG's sector 1).
+    /// Parse an AGF from the start of `data` (the AG's sector 1), leaving
+    /// [`Self::crc_valid`] as `None` (version-agnostic — no CRC check).
+    ///
+    /// Use [`Self::parse_verified`] on a v5 filesystem to also verify `agf_crc`.
     ///
     /// # Errors
     /// [`XfsError::BadMagic`] if the magic is not `XAGF`; [`XfsError::Truncated`]
     /// if the buffer is shorter than the AGF core.
     pub fn parse(data: &[u8]) -> Result<Self, XfsError> {
+        Self::parse_inner(data, None)
+    }
+
+    /// Parse an AGF and verify its v5 CRC32c (`agf_crc` at offset 216 over the
+    /// whole sector `data`). On `is_v5 == false` the status is `None` (v4 has no
+    /// CRC). The CRC check is **non-fatal**: a mismatch sets `crc_valid` to
+    /// `Some(false)` and still returns the parsed AGF.
+    ///
+    /// # Errors
+    /// Same as [`Self::parse`].
+    pub fn parse_verified(data: &[u8], is_v5: bool) -> Result<Self, XfsError> {
+        Self::parse_inner(data, Some(is_v5))
+    }
+
+    /// Shared AGF parse; `verify` is `None` (skip CRC) or `Some(is_v5)`.
+    fn parse_inner(data: &[u8], verify: Option<bool>) -> Result<Self, XfsError> {
         // Identity before length so a wrong-sector error names the bytes.
         let magicnum = check_magic(data, XFS_AGF_MAGIC)?;
         if data.len() < AGF_MIN_LEN {
@@ -196,6 +231,7 @@ impl Agf {
         // flfirst/last/count @40/44/48, freeblks/longest/btreeblks @52/56/60,
         // then (v5) rmap_blocks @80, refcount_blocks @84, refcount_root @88,
         // refcount_level @92.
+        let crc_valid = verify.and_then(|is_v5| crc_status(is_v5, data, AGF_CRC_OFF));
         Ok(Self {
             magicnum,
             versionnum: be_u32(data, 4),
@@ -217,17 +253,37 @@ impl Agf {
             refcount_blocks: be_u32(data, 84),
             refcount_root: be_u32(data, 88),
             refcount_level: be_u32(data, 92),
+            crc_valid,
         })
     }
 }
 
 impl Agi {
-    /// Parse an AGI from the start of `data` (the AG's sector 2).
+    /// Parse an AGI from the start of `data` (the AG's sector 2), leaving
+    /// [`Self::crc_valid`] as `None` (version-agnostic — no CRC check).
+    ///
+    /// Use [`Self::parse_verified`] on a v5 filesystem to also verify `agi_crc`.
     ///
     /// # Errors
     /// [`XfsError::BadMagic`] if the magic is not `XAGI`; [`XfsError::Truncated`]
     /// if the buffer is shorter than the core + `unlinked[64]`.
     pub fn parse(data: &[u8]) -> Result<Self, XfsError> {
+        Self::parse_inner(data, None)
+    }
+
+    /// Parse an AGI and verify its v5 CRC32c (`agi_crc` at offset 312 over the
+    /// whole sector `data`). On `is_v5 == false` the status is `None` (v4 has no
+    /// CRC). The CRC check is **non-fatal**: a mismatch sets `crc_valid` to
+    /// `Some(false)` and still returns the parsed AGI.
+    ///
+    /// # Errors
+    /// Same as [`Self::parse`].
+    pub fn parse_verified(data: &[u8], is_v5: bool) -> Result<Self, XfsError> {
+        Self::parse_inner(data, Some(is_v5))
+    }
+
+    /// Shared AGI parse; `verify` is `None` (skip CRC) or `Some(is_v5)`.
+    fn parse_inner(data: &[u8], verify: Option<bool>) -> Result<Self, XfsError> {
         let magicnum = check_magic(data, XFS_AGI_MAGIC)?;
         if data.len() < AGI_MIN_LEN {
             return Err(XfsError::Truncated {
@@ -244,6 +300,7 @@ impl Agi {
         for (i, slot) in unlinked.iter_mut().enumerate() {
             *slot = be_u32(data, AGI_UNLINKED_OFF + i * 4);
         }
+        let crc_valid = verify.and_then(|is_v5| crc_status(is_v5, data, AGI_CRC_OFF));
         Ok(Self {
             magicnum,
             versionnum: be_u32(data, 4),
@@ -260,6 +317,7 @@ impl Agi {
             free_level: be_u32(data, 332),
             ino_blocks: be_u32(data, 336),
             fino_blocks: be_u32(data, 340),
+            crc_valid,
         })
     }
 }
@@ -286,10 +344,14 @@ impl Agfl {
         // (sectorsize - 36) / 4 slots.
         let slots = (sectorsize as usize).saturating_sub(AGFL_V5_HEADER_LEN) / 4;
         let bno = read_bno_ring(data, AGFL_V5_HEADER_LEN, slots);
+        // A v5 AGFL always carries a CRC (`agfl_crc` at offset 32) over the whole
+        // sector; verify it non-fatally.
+        let crc_valid = crc_status(true, data, AGFL_CRC_OFF);
         Ok(Self {
             magicnum: Some(magicnum),
             seqno: Some(be_u32(data, 4)),
             bno,
+            crc_valid,
         })
     }
 
@@ -304,6 +366,7 @@ impl Agfl {
             magicnum: None,
             seqno: None,
             bno,
+            crc_valid: None,
         }
     }
 }

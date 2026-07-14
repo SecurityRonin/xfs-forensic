@@ -21,6 +21,7 @@
 //!   `xfs_inode_decode_bigtime` / `xfs_bigtime_to_unix`).
 
 use crate::bytes::{be_u16, be_u32, be_u64, u8_at};
+use crate::crc::{crc_status, DINODE_CRC_OFF};
 use crate::error::XfsError;
 
 /// The XFS inode magic number, ASCII `"IN"` at byte 0 (`XFS_DINODE_MAGIC`).
@@ -225,8 +226,15 @@ pub struct Inode {
     /// `di_uuid` (offset 160) — owning filesystem UUID; `None` on v2.
     pub uuid: Option<[u8; 16]>,
     /// `di_crc` (offset 100, little-endian) — inode CRC32c; `None` on v2.
-    /// **Exposed, not verified** — verification is P6.
+    /// The raw stored value; [`Self::crc_valid`] carries the verification result.
     pub crc: Option<u32>,
+    /// The v5 CRC32c status of this inode: `Some(true)` if `di_crc` (offset 100)
+    /// verifies over the whole inode-sized slice, `Some(false)` if it does not
+    /// (corrupt/tampered), or `None` on a v2 inode (no CRC). **Non-fatal** — a
+    /// bad CRC does not fail the parse; the `-forensic` layer turns it into a
+    /// Finding. Computed only when [`Self::parse`] receives the full inode; a
+    /// short slice (< inodesize) verifies as `Some(false)`.
+    pub crc_valid: Option<bool>,
     /// The raw data-fork ("u" union) bytes — everything from
     /// [`Self::data_fork_offset`] to the end of the inode-sized slice. For an
     /// [`InodeFormat::Extents`] inode this holds the inline `xfs_bmbt_rec`
@@ -309,6 +317,10 @@ impl Inode {
         };
         let data_fork = data.get(fork_off..).unwrap_or(&[]).to_vec();
 
+        // A v3 (v5-filesystem) inode carries a CRC32c over the whole inode-sized
+        // slice; a v2 inode has none. Non-fatal — surfaced, never fails parse.
+        let crc_valid = crc_status(is_v3, data, DINODE_CRC_OFF);
+
         Ok(Self {
             magic,
             mode: be_u16(data, 2),
@@ -329,6 +341,7 @@ impl Inode {
             di_ino,
             uuid,
             crc,
+            crc_valid,
             data_fork,
         })
     }

@@ -20,6 +20,7 @@
 mod agheaders;
 mod btree;
 pub mod bytes;
+pub mod crc;
 mod dir;
 mod error;
 mod extent;
@@ -30,11 +31,14 @@ pub use agheaders::{
     Agf, Agfl, Agi, XFS_AGFL_MAGIC, XFS_AGF_MAGIC, XFS_AGI_MAGIC, XFS_AGI_UNLINKED_BUCKETS,
 };
 pub use btree::{
-    read_btree_extents, MAX_BMBT_LEVELS, MAX_BMBT_PTRS, XFS_BMAP_CRC_MAGIC, XFS_BMAP_MAGIC,
+    read_btree_extents, verify_bmbt_block_crc, MAX_BMBT_LEVELS, MAX_BMBT_PTRS, XFS_BMAP_CRC_MAGIC,
+    XFS_BMAP_MAGIC,
 };
+pub use crc::{crc_status, verify_crc};
 pub use dir::{
-    read_block_dir, read_by_path, read_data_dir_block, read_dir, read_shortform_dir, DirEntry,
-    XFS_DIR2_BLOCK_MAGIC, XFS_DIR2_DATA_MAGIC, XFS_DIR3_BLOCK_MAGIC, XFS_DIR3_DATA_MAGIC,
+    read_block_dir, read_by_path, read_data_dir_block, read_dir, read_shortform_dir,
+    verify_dir_block_crc, DirEntry, XFS_DIR2_BLOCK_MAGIC, XFS_DIR2_DATA_MAGIC,
+    XFS_DIR3_BLOCK_MAGIC, XFS_DIR3_DATA_MAGIC,
 };
 pub use error::XfsError;
 pub use extent::{assemble_extents, read_extents, read_file_from_fork, BmbtRec};

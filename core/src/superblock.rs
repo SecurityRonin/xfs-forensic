@@ -5,6 +5,7 @@
 //! `struct xfs_dsb` in `fs/xfs/libxfs/xfs_format.h`; `XFSLABEL_MAX = 12`.
 
 use crate::bytes::{be_u16, be_u32, be_u64, u8_at};
+use crate::crc::{crc_status, SB_CRC_OFF};
 use crate::error::XfsError;
 use crate::inode::Inode;
 
@@ -61,6 +62,13 @@ pub struct Superblock {
     /// `sb_features_incompat` (offset 216) — v5 incompatible feature flags; the
     /// FTYPE bit (`0x1`) here is the v5 equivalent of the `features2` FTYPE bit.
     pub features_incompat: u32,
+    /// The v5 CRC32c status of the superblock sector: `Some(true)` if `sb_crc`
+    /// (offset 224) verifies over the whole sector, `Some(false)` if it does not
+    /// (corrupt/tampered), or `None` on a v4 filesystem (no CRC). **Non-fatal**:
+    /// a bad CRC does not fail the parse — the `-forensic` layer turns it into a
+    /// Finding. Computed only when [`Self::parse`] receives the full sector; a
+    /// short buffer (< sector) verifies as `Some(false)`.
+    pub crc_valid: Option<bool>,
 }
 
 impl Superblock {
@@ -100,13 +108,18 @@ impl Superblock {
 
         // Offsets from `struct xfs_dsb` (fs/xfs/libxfs/xfs_format.h),
         // XFSLABEL_MAX = 12.
+        let versionnum = be_u16(data, 100);
+        // v5 iff the low nibble of sb_versionnum is 5. The CRC covers the whole
+        // sector `data`; on v4 there is no CRC field so the status is `None`.
+        let is_v5 = versionnum & 0x000f == 5;
+        let crc_valid = crc_status(is_v5, data, SB_CRC_OFF);
         Ok(Self {
             magic,
             blocksize: be_u32(data, 4),
             rootino: be_u64(data, 56),
             agblocks: be_u32(data, 84),
             agcount: be_u32(data, 88),
-            versionnum: be_u16(data, 100),
+            versionnum,
             inodesize: be_u16(data, 104),
             inopblock: be_u16(data, 106),
             blocklog: u8_at(data, 120),
@@ -115,6 +128,7 @@ impl Superblock {
             agblklog: u8_at(data, 124),
             features2: be_u32(data, 200),
             features_incompat: be_u32(data, 216),
+            crc_valid,
         })
     }
 
