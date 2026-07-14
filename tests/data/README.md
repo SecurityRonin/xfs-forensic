@@ -51,6 +51,7 @@ for v in v5 v4; do
   xfs_db -r $v.img -c 'sb 0'   -c 'print' > $v.sb0.txt
   xfs_db -r $v.img -c 'agi 0'  -c 'print' > $v.agi0.txt
   xfs_db -r $v.img -c 'agf 0'  -c 'print' > $v.agf0.txt
+  xfs_db -r $v.img -c 'agfl 0' -c 'print' > $v.agfl0.txt
   xfs_db -r $v.img -c 'inode 64' -c 'print' > $v.inode64.txt
   fsstat $v.img > $v.fsstat.txt   # NOTE: TSK 4.12.1 (Ubuntu) has NO XFS support — fails
   fls -r $v.img > $v.fls.txt      #       both fsstat and fls fail (recorded verbatim)
@@ -71,6 +72,7 @@ xfs_db -r v5.img ... convert                                    > v5.convert_ags
 | `v5.sb0.txt` / `v4.sb0.txt` | `xfs_db sb 0 print` | **P0 superblock field values** (magic, blocksize, inodesize, agblocks, agcount, rootino, versionnum, log2 shifts) |
 | `v5.xfs_info.txt` / `v4.xfs_info.txt` | `xfs_info` | human geometry cross-check |
 | `v5.agi0.txt` / `v5.agf0.txt` (+ v4) | `xfs_db agi/agf 0` | P1 AG headers incl. `agi_unlinked[]` |
+| `v5.agfl0.txt` / `v4.agfl0.txt` | `xfs_db agfl 0 print` | P1 AGFL free-list ring; v5 has the `XAFL` header (magic/seqno/uuid/lsn/crc) + 119 `bno[]` slots, v4 is a bare 128-slot `bno[]` array (no header) |
 | `v5.inode64.txt` / `v5.inode128.txt` | `xfs_db inode N print` | P2 inode core (v3), rootino=128 |
 | `v4.inode64.txt` | `xfs_db inode 64 print` | P2 inode core (v2) |
 | `v5.inode_big.txt` / `v5.bmap_big.txt` | `xfs_db inode 135 print` + `bmap` | P3 extent-list file (single extent, startblock 24, count 4096) |
