@@ -9,7 +9,7 @@
 //!   `tests/data/README.md` (P4 directory oracle section).
 //! - **Capstone Tier-1:** `read_by_path("/sf/file1.txt")` reconstructs the file
 //!   THROUGH directory navigation (root short-form -> descend into `sf` ->
-//!   name-match `file1.txt` -> read_file) and the sha256 EQUALS the committed
+//!   name-match `file1.txt` -> `read_file`) and the sha256 EQUALS the committed
 //!   mount-ro content oracle. This proves P1+P2+P3+P4 compose into the real
 //!   forensic read-file-by-path entrypoint.
 //! - **v4 no-ftype branch:** the dedicated `v4dir.img` (mkfs `-n ftype=0`, so the
@@ -84,8 +84,8 @@ fn read_dir_v5_root_shortform_matches_ls_i() {
     // mount -o ro; ls -i mnt  (tests/data/README.md P4 oracle)
     let want: BTreeMap<String, u64> = [
         ("sf".to_string(), 131u64),
-        ("block".to_string(), 262272),
-        ("leaf".to_string(), 655488),
+        ("block".to_string(), 262_272),
+        ("leaf".to_string(), 655_488),
         ("big.bin".to_string(), 135),
     ]
     .into_iter()
@@ -132,13 +132,13 @@ fn read_dir_v5_block_dir_matches_ls_i() {
     };
     let img = std::fs::read(&path).unwrap();
     let sb = Superblock::parse(&img).unwrap();
-    let block = sb.read_inode(&img, 262272).unwrap();
+    let block = sb.read_inode(&img, 262_272).unwrap();
     let entries = read_dir(&img, &sb, &block).expect("block/ block dir lists");
 
     let got = name_inode_map(&entries);
     // ls -i mnt/block: e01..e40 -> 262273..262312.
     let want: BTreeMap<String, u64> = (1..=40u64)
-        .map(|i| (format!("e{i:02}"), 262272 + i))
+        .map(|i| (format!("e{i:02}"), 262_272 + i))
         .collect();
     assert_eq!(got.len(), 40, "block dir has 40 named entries (e01..e40)");
     assert_eq!(
@@ -279,7 +279,7 @@ fn read_dir_leaf_dir_is_unsupported_and_names_format() {
     let img = std::fs::read(&path).unwrap();
     let sb = Superblock::parse(&img).unwrap();
     // Inode 655488 = the leaf dir: format == Extents but size (49152) != blocksize.
-    let leaf = sb.read_inode(&img, 655488).unwrap();
+    let leaf = sb.read_inode(&img, 655_488).unwrap();
     let res = read_dir(&img, &sb, &leaf);
     match res {
         Err(XfsError::UnsupportedDir { detail }) => {
@@ -329,5 +329,200 @@ fn read_shortform_truncated_fork_does_not_panic() {
     assert!(
         entries.len() < 5,
         "truncated fork yields only entries that fit"
+    );
+}
+
+#[test]
+fn read_shortform_stops_when_inum_runs_past_fork() {
+    // Header (count=1, i8count=0, parent=128) + one entry whose name is present
+    // but the fork ends before the 4-byte inode number: the reader must break
+    // (drop the incomplete entry) rather than read a partial/garbage inum.
+    // count(1) i8count(1) parent(4) | namelen(1)=2 offset(2) name(2)="ab" | <cut>
+    let fork = [1u8, 0, 0, 0, 0, 128, 2, 0, 0x40, b'a', b'b'];
+    let entries = xfs::read_shortform_dir(&fork, false);
+    assert!(entries.is_empty(), "entry with no room for inum is dropped");
+}
+
+#[test]
+fn read_shortform_i8count_uses_8byte_inums() {
+    // i8count != 0 -> parent and every inode number are 8 bytes (exercises the
+    // read_inum 8-byte arm and the 8-byte parent skip). One entry "z" -> inode 9.
+    // count(1)=1 i8count(1)=1 parent(8) | namelen(1)=1 offset(2) name(1)="z"
+    // ftype(1)=1 inumber(8)=9
+    let mut fork = vec![1u8, 1];
+    fork.extend_from_slice(&128u64.to_be_bytes()); // parent (8 bytes)
+    fork.push(1); // namelen
+    fork.extend_from_slice(&[0x00, 0x60]); // offset
+    fork.push(b'z'); // name
+    fork.push(1); // ftype
+    fork.extend_from_slice(&9u64.to_be_bytes()); // inumber (8 bytes)
+    let entries = xfs::read_shortform_dir(&fork, true);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].name, b"z");
+    assert_eq!(entries[0].inode, 9, "8-byte inode number decoded");
+    assert_eq!(entries[0].ftype, Some(1));
+}
+
+#[test]
+fn read_block_dir_v4_magic_xd2b_and_noftype() {
+    // A crafted v4 (XD2B) block dir with a 16-byte header, one entry "a" -> ino 7
+    // (no ftype byte), then a block tail with count=0 (no leaf array). Exercises
+    // the XD2B header-length arm and the has_ftype=false block path.
+    let blocksize = 64usize; // small but valid: hdr(16) + entry(16) + ... + tail(8)
+    let mut block = vec![0u8; blocksize];
+    block[0..4].copy_from_slice(&xfs::XFS_DIR2_BLOCK_MAGIC.to_be_bytes());
+    // entry at offset 16: inumber(8)=7 namelen(1)=1 name="a" tag(2) -> aligned 16.
+    let off = 16;
+    block[off..off + 8].copy_from_slice(&7u64.to_be_bytes());
+    block[off + 8] = 1; // namelen
+    block[off + 9] = b'a'; // name
+                           // tag at off+10..12 (ignored); rest zero.
+                           // block tail (last 8 bytes): count=0, stale=0 -> leaf_start = blocksize-8.
+                           // (count already zero.)
+    let entries = xfs::read_block_dir(&block, false).expect("v4 block dir parses");
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].name, b"a");
+    assert_eq!(entries[0].inode, 7);
+    assert_eq!(entries[0].ftype, None, "no-ftype block entry -> None");
+}
+
+#[test]
+fn read_block_dir_unrecognized_magic_fails_loud() {
+    // A block whose data-block magic is neither XDB3 nor XD2B must fail LOUD and
+    // NAME the offending magic bytes (never a silent empty listing).
+    let mut block = vec![0u8; 64];
+    block[0..4].copy_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
+    let res = xfs::read_block_dir(&block, true);
+    match res {
+        Err(XfsError::UnsupportedDir { detail }) => {
+            assert!(
+                detail.contains("0xdeadbeef") && detail.contains("magic"),
+                "must name the offending magic, got: {detail}"
+            );
+        }
+        other => panic!("unrecognized magic must fail loud, got {other:?}"),
+    }
+}
+
+#[test]
+fn read_block_dir_tiny_block_no_tail_is_empty() {
+    // A block smaller than the 8-byte tail: leaf_start falls to 0, region_end
+    // clamps to hdr_len, the walk runs zero iterations -> empty (no panic).
+    let mut block = vec![0u8; 4];
+    block[0..4].copy_from_slice(&xfs::XFS_DIR3_BLOCK_MAGIC.to_be_bytes());
+    let entries = xfs::read_block_dir(&block, true).expect("tiny block parses empty");
+    assert!(entries.is_empty(), "no room for entries -> empty listing");
+}
+
+#[test]
+fn read_block_dir_entry_past_block_stops() {
+    // A v5 block whose last entry claims a namelen running past the block end:
+    // the reader must break rather than over-read. hdr(64) + a valid entry then a
+    // truncated one.
+    let blocksize = 128usize;
+    let mut block = vec![0u8; blocksize];
+    block[0..4].copy_from_slice(&xfs::XFS_DIR3_BLOCK_MAGIC.to_be_bytes());
+    // count=0 in tail so leaf_start = blocksize - 8 = 120; entries region 64..120.
+    let off = 64;
+    // entry claims namelen=250 (way past the block) -> name slice is None -> break.
+    block[off..off + 8].copy_from_slice(&5u64.to_be_bytes());
+    block[off + 8] = 250; // namelen past end
+    let entries = xfs::read_block_dir(&block, true).expect("must not panic");
+    assert!(entries.is_empty(), "entry running past block is dropped");
+}
+
+#[test]
+fn read_block_dir_skips_unused_free_records() {
+    // A v5 block with a leading unused record (freetag 0xFFFF, length 16) then a
+    // real entry "b" -> ino 3. Exercises the free-record skip branch.
+    let blocksize = 128usize;
+    let mut block = vec![0u8; blocksize];
+    block[0..4].copy_from_slice(&xfs::XFS_DIR3_BLOCK_MAGIC.to_be_bytes());
+    let off = 64;
+    // unused record: freetag(2)=0xFFFF, length(2)=16.
+    block[off..off + 2].copy_from_slice(&0xFFFFu16.to_be_bytes());
+    block[off + 2..off + 4].copy_from_slice(&16u16.to_be_bytes());
+    // real entry at off+16.
+    let e = off + 16;
+    block[e..e + 8].copy_from_slice(&3u64.to_be_bytes());
+    block[e + 8] = 1; // namelen
+    block[e + 9] = b'b'; // name
+    block[e + 10] = 2; // ftype
+    let entries = xfs::read_block_dir(&block, true).expect("parses past the free record");
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].name, b"b");
+    assert_eq!(entries[0].inode, 3);
+    assert_eq!(entries[0].ftype, Some(2));
+}
+
+#[test]
+fn read_block_dir_zero_length_free_record_makes_progress() {
+    // A malformed unused record with length 0 must not stall the loop: the reader
+    // enforces forward progress of at least one 8-byte grain.
+    let blocksize = 128usize;
+    let mut block = vec![0u8; blocksize];
+    block[0..4].copy_from_slice(&xfs::XFS_DIR3_BLOCK_MAGIC.to_be_bytes());
+    let off = 64;
+    block[off..off + 2].copy_from_slice(&0xFFFFu16.to_be_bytes()); // freetag
+                                                                   // length stays 0 -> the reader must still advance and terminate.
+    let entries = xfs::read_block_dir(&block, true).expect("must terminate, not hang");
+    assert!(entries.is_empty());
+}
+
+#[test]
+fn read_dir_btree_format_is_unsupported_and_names_format() {
+    // A directory inode reported as Btree format is not yet supported: read_dir
+    // must fail loud naming the format (the InodeFormat::Btree/other arm).
+    use xfs::{Inode, InodeFormat};
+    let img = min_sb_bytes();
+    let sb = Superblock::parse(&img).unwrap();
+    // Craft a v3 directory inode with di_format = 3 (BTREE).
+    let mut ib = vec![0u8; 512];
+    ib[0..2].copy_from_slice(&0x494eu16.to_be_bytes()); // "IN"
+    ib[2..4].copy_from_slice(&0o040_700u16.to_be_bytes()); // dir mode
+    ib[4] = 3; // di_version = v3
+    ib[5] = 3; // di_format = BTREE
+    let inode = Inode::parse(&ib).unwrap();
+    assert_eq!(inode.format, InodeFormat::Btree);
+    match read_dir(&img, &sb, &inode) {
+        Err(XfsError::UnsupportedDir { detail }) => {
+            assert!(detail.contains("Btree"), "must name Btree, got: {detail}");
+        }
+        other => panic!("btree dir must fail loud, got {other:?}"),
+    }
+}
+
+#[test]
+fn read_by_path_non_dir_intermediate_component_errors() {
+    // Descending THROUGH a component that is a regular file (not a directory)
+    // must error, not try to list a file as a directory.
+    let Some(path) = image_path("XFS_ORACLE_V5_IMG", "v5.img") else {
+        eprintln!("skip: v5 image absent");
+        return;
+    };
+    let img = std::fs::read(&path).unwrap();
+    let sb = Superblock::parse(&img).unwrap();
+    // big.bin is a regular file; treating it as a dir component must fail.
+    let res = read_by_path(&img, &sb, "/big.bin/whatever");
+    assert!(
+        matches!(res, Err(XfsError::PathNotFound { .. })),
+        "a file used as an intermediate dir component -> PathNotFound, got {res:?}"
+    );
+}
+
+#[test]
+fn read_by_path_empty_path_is_not_found() {
+    // An empty path resolves to the root directory, which is not a file: the
+    // reader reports PathNotFound rather than trying to read a directory's bytes.
+    let Some(path) = image_path("XFS_ORACLE_V5_IMG", "v5.img") else {
+        eprintln!("skip: v5 image absent");
+        return;
+    };
+    let img = std::fs::read(&path).unwrap();
+    let sb = Superblock::parse(&img).unwrap();
+    let res = read_by_path(&img, &sb, "/");
+    assert!(
+        matches!(res, Err(XfsError::PathNotFound { .. })),
+        "empty path -> PathNotFound, got {res:?}"
     );
 }
