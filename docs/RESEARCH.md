@@ -195,7 +195,12 @@ inode-number encoding + five dir formats + self-describing v5 metadata.
 - **P1** Inode-number decode + AG headers (AGF/AGI/AGFL incl. `agi_unlinked[64]`). Oracle: `xfs_db convert` (exact-match), `agi/agf print`.
 - **P2** Inode core (v2 + v3; bigtime). Oracle: `xfs_db inode N print`, `istat`.
 - **P3** Extent-list files (`di_format=2`) — 16-byte bmbt unpack → file read. Oracle: `xfs_db bmap`, `icat|sha256`, mount content.
-- **P4** Directories (short-form → block → leaf → node → btree). Oracle: `fls -r`, `xfs_db` dir dumps.
+- **P4** Directories — **short-form + block DONE** (`read_dir`/`read_by_path`,
+  oracle: `xfs_db` dir dumps + mount-ro `ls -i` name→inode + capstone content
+  sha256 through path navigation; TSK has no XFS on this host so `fls` is not the
+  oracle). The ftype byte tracks the fs FEATURE bit (`Superblock::has_ftype`),
+  not the v4/v5 version — modern mkfs enables ftype on v4. **leaf → node → btree
+  deferred to P4b/P5** (a dir of an unhandled format fails loud `UnsupportedDir`).
 - **P5** bmap B+tree (`di_format=3`) + sparse inodes. Oracle: `xfs_db bmap`, `fls -r` full, TSK.
 - **P6** v5 CRC32c + self-describing header validation.
 
