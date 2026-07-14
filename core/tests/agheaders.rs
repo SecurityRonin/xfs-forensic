@@ -267,3 +267,27 @@ fn truncated_headers_do_not_panic() {
     let a = Agfl::parse_v4(&short, SECTOR as u32);
     assert_eq!(a.bno.len(), 128, "slot count fixed by sectorsize");
 }
+
+/// The minted images have an empty `unlinked[64]` (no orphaned inodes), so the
+/// oracle asserts only exercise the all-null case. This hand-built AGI puts a
+/// non-null AG-inode number in a specific bucket to prove the array is indexed
+/// at the right offset/stride (bucket i at byte `40 + i*4`) — the forensically
+/// load-bearing decode when a real image DOES carry orphaned-open inodes.
+#[test]
+fn agi_unlinked_bucket_indexing() {
+    let mut d = vec![0xffu8; SECTOR]; // all buckets null by default
+    d[0..4].copy_from_slice(&XFS_AGI_MAGIC.to_be_bytes());
+    // Bucket 5 -> AG-relative inode 0x1234; bucket 63 -> 0x00AB_CDEF.
+    d[40 + 5 * 4..40 + 5 * 4 + 4].copy_from_slice(&0x0000_1234u32.to_be_bytes());
+    d[40 + 63 * 4..40 + 63 * 4 + 4].copy_from_slice(&0x00AB_CDEFu32.to_be_bytes());
+
+    let agi = Agi::parse(&d).expect("parses");
+    assert_eq!(agi.unlinked[5], 0x0000_1234, "bucket 5 decoded at 40+5*4");
+    assert_eq!(
+        agi.unlinked[63], 0x00AB_CDEF,
+        "last bucket decoded at 40+63*4"
+    );
+    assert_eq!(agi.unlinked[0], 0xffff_ffff, "untouched buckets stay null");
+    assert_eq!(agi.unlinked[4], 0xffff_ffff);
+    assert_eq!(agi.unlinked[6], 0xffff_ffff);
+}
