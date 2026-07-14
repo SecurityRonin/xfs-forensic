@@ -266,34 +266,11 @@ fn read_by_path_v4_noftype_reaches_file1() {
     );
 }
 
-// -------------------------------------------------------------------------
-// Unsupported (fail LOUD, name the format) — leaf/node dir
-// -------------------------------------------------------------------------
-
-#[test]
-fn read_dir_leaf_dir_is_unsupported_and_names_format() {
-    let Some(path) = image_path("XFS_ORACLE_V5_IMG", "v5.img") else {
-        eprintln!("skip: v5 image absent");
-        return;
-    };
-    let img = std::fs::read(&path).unwrap();
-    let sb = Superblock::parse(&img).unwrap();
-    // Inode 655488 = the leaf dir: format == Extents but size (49152) != blocksize.
-    let leaf = sb.read_inode(&img, 655_488).unwrap();
-    let res = read_dir(&img, &sb, &leaf);
-    match res {
-        Err(XfsError::UnsupportedDir { detail }) => {
-            // The error must NAME what it can't handle (fail loud with the value).
-            assert!(
-                detail.contains("leaf")
-                    || detail.contains("multi-block")
-                    || detail.contains("49152"),
-                "Unsupported error must name the format/size, got: {detail}"
-            );
-        }
-        other => panic!("leaf dir must fail loud as UnsupportedDir, got {other:?}"),
-    }
-}
+// The P4 leaf-dir "fail loud, unsupported" test is superseded by P5 Part 2,
+// which reads leaf directories via the multi-block data-block walk. Its success
+// gate (read_dir(leaf/) == ls -i, ~2000 entries) lives in `tests/dir_leaf.rs`.
+// The remaining loud-fail path (Btree-format directory) is still covered above
+// by `read_dir_btree_format_is_unsupported_and_names_format`.
 
 // -------------------------------------------------------------------------
 // Robustness (crafted, no image) — no panic on malformed input
