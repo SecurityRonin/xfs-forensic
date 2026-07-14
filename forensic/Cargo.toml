@@ -18,5 +18,10 @@ xfs-core = { workspace = true }
 # XFS structure knowledge + the shared report model (Severity/Observation).
 forensicnomicon = { workspace = true }
 
+[dev-dependencies]
+# Independent content-hash oracle for the F1 carve gate: carved deleted-file
+# bytes are hashed and compared to the mount-ro ground truth. Test-only.
+sha2 = "0.10"
+
 [lints]
 workspace = true
