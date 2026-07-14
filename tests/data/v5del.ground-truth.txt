@@ -1,0 +1,33 @@
+XFS deleted-inode recovery oracle (F1) — self-minted on Parallels "Ubuntu 24.04 (with Rosetta)", xfsprogs (mkfs.xfs/xfs_db).
+
+Mint procedure (verbatim):
+  dd if=/dev/zero of=del.img bs=1M count=512 status=none
+  mkfs.xfs -q -f del.img                       # v5 default: crc=1 isize=512 agcount=4 agsize=32768 bsize=4096 bigtime=1
+  mount -o loop del.img mnt
+  # keepme_control.bin = 32768 bytes of (b'SECRET-XFS-DELETED-INODE-ORACLE-0123456789ABCDEF'*700)[:32768]  -> inode 131 (control, NOT deleted)
+  # DELETED_target.bin = 32768 bytes of (b'DELETED-XFS-CARVE-TARGET-abcdef0123456789-!!!!!!'*700)[:32768]  -> inode 132 (deleted)
+  sync
+  rm mnt/DELETED_target.bin ; sync ; umount mnt
+
+Pre-delete (xfs_db inode 132 print):
+  core.magic=0x494e core.mode=0100644 core.format=2(extents) core.size=32768 core.nblocks=8 core.nextents=1 core.gen=2591718707
+  u3.bmx[0] = 0:[startoff=0, startblock=32, blockcount=8, extentflag=0]
+
+Post-delete (xfs_db inode 132 print):
+  core.magic=0x494e core.mode=0 core.format=2(extents) core.size=0 core.nblocks=0 core.nextents=0 core.gen=2591718708 (incremented)
+  ctime updated to deletion time; bmx count reported 0.
+  BUT the raw 16-byte extent record at inode offset 176 SURVIVES verbatim: l0=0x0 l1=0x04000008 => [startoff=0, startblock=32, blockcount=8].
+
+Ground-truth content hash (original DELETED_target.bin, and the carve from physical blocks 32..40):
+  sha256 = e34be105623327ff457b879a66d110ce877d3b754f0e1a704537598d42d61b98
+  (carve = dd if=del.img bs=4096 skip=32 count=8 | sha256sum -> identical)
+
+Committed fixture:
+  v5del.freed_inode.bin  = the 512-byte freed inode 132 (sha256 3198a655f5bb536330ed141c38670137dfe75cc23093f02e1dd8987c3a1ec752).
+    Proves residual-extent survival + zeroed nextents/mode/size, decodable with no full image.
+
+Full image del.img (512 MiB, GITIGNORED, sha256 98709b6e5fd72eb5a0d5e630e5b599de7cfb06f29a4f58a1c88a5cb0412ba163):
+  NOT committed. The env-gated carve-and-hash test reads it when XFS_DEL_ORACLE points at it.
+  Note: the committed v5.img does NOT retain deleted-extent residue — its rm'd file was a 10-byte
+  inline (Local-format) file with no extents, and its other freed inode slots are born-zeroed
+  preallocated chunks. This dedicated extent-format deletion case is the proper F1 oracle.

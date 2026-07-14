@@ -52,6 +52,37 @@ sync; rm mnt/sf/DELETED_secret.txt; sync                                        
 umount mnt
 ```
 
+### F1 deleted-inode recovery oracle (`v5del.*`) — Tier-2, self-minted
+
+The `v5.img` `DELETED_secret.txt` case leaves **no** recoverable residue: it was a
+10-byte inline (`Local`-format) file with no extents, and every other freed inode
+slot on `v5.img` is a born-zeroed preallocated chunk (verified — 79 freed inodes,
+none with residual data-fork bytes). A dedicated **extent-format** deletion case is
+the proper F1 oracle, minted on Parallels "Ubuntu 24.04 (with Rosetta)":
+
+```bash
+dd if=/dev/zero of=del.img bs=1M count=512 status=none
+mkfs.xfs -q -f del.img                                    # v5 default (crc=1 isize=512 agcount=4)
+mount -o loop del.img mnt
+python3 -c "import sys;sys.stdout.buffer.write((b'SECRET-XFS-DELETED-INODE-ORACLE-0123456789ABCDEF'*700)[:32768])" | tee mnt/keepme_control.bin >/dev/null  # ino 131 (control)
+python3 -c "import sys;sys.stdout.buffer.write((b'DELETED-XFS-CARVE-TARGET-abcdef0123456789-!!!!!!'*700)[:32768])" | tee mnt/DELETED_target.bin >/dev/null  # ino 132 (deleted)
+sync; rm mnt/DELETED_target.bin; sync; umount mnt
+xfs_db -r del.img -c 'inode 132' -c 'print'               # post-delete: mode=0 size=0 nextents=0, bmx count 0
+dd if=del.img bs=1 skip=$((132*512)) count=512 | base64    # -> v5del.freed_inode.bin (512 B, committed)
+```
+
+Ground truth (see `v5del.ground-truth.txt`): the freed inode 132 zeroes
+`mode/size/nblocks/nextents` and increments `gen`, yet the raw 16-byte extent record
+at inode **offset 176 survives verbatim** (`l1=0x04000008` → `startoff=0, startblock=32,
+blockcount=8`). Carving physical blocks 32..40 reproduces the original
+`DELETED_target.bin` sha256 `e34be105623327ff457b879a66d110ce877d3b754f0e1a704537598d42d61b98`.
+
+| Fixture | Committed? | Use |
+|---|---|---|
+| `v5del.freed_inode.bin` (sha256 `3198a655…`) | yes (512 B) | residual-extent decode: freed inode with zeroed `nextents` but a surviving extent record |
+| `v5del.ground-truth.txt` | yes | full mint procedure + xfs_db pre/post + carve hash |
+| `del.img` (512 MiB, sha256 `98709b6e…`) | **no** (gitignored `*.img`) | env-gated carve-and-hash test via `XFS_DEL_ORACLE=/path/to/del.img` |
+
 ## Oracle capture commands (Tier-1 structural ground truth)
 
 ```bash
