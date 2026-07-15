@@ -9,7 +9,12 @@
 //!     the carve-and-hash gate: the recovered inode's carved bytes' sha256 MUST
 //!     equal the original `DELETED_target.bin` sha256.
 
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::doc_markdown,
+    clippy::format_collect
+)]
 
 use std::path::PathBuf;
 
