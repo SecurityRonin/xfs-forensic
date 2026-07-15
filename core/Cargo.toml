@@ -23,10 +23,20 @@ exclude = ["/fuzz", "/.github", "/docs", "/tests"]
 [lib]
 name = "xfs"
 
+[features]
+# Adapt `XfsFs` to the forensic-vfs `FileSystem` trait (see `src/vfs.rs`) so an
+# XFS volume composes as `Arc<dyn FileSystem>` in the forensic-vfs engine.
+# Opt-in so a bare reader stays dependency-light; third-party consumers who only
+# want the parser pay no forensic-vfs cost.
+vfs = ["dep:forensic-vfs"]
+
 [dependencies]
 thiserror = { workspace = true }
 # CRC32c verification for v5 self-describing metadata blocks.
 crc = { workspace = true }
+# forensic-vfs (KNOWLEDGE leaf) — the read-only FileSystem navigation contract.
+# Optional; enabled by the `vfs` feature.
+forensic-vfs = { workspace = true, optional = true }
 
 [dev-dependencies]
 # Independent content-hash oracle for the P3 Tier-1 gate: the reconstructed
