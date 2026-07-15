@@ -62,7 +62,7 @@ Confidence is marked; items not fetched verbatim are flagged as gaps.
     byte = `fsblock * sb_blocksize + offset * sb_inodesize`.
   - Live example (`sb_inopblog=3` → 8 inodes/block): `ino 67761631 → agno 0x2,
     agino 0x9f5df, agblock 0x13ebb, offset 0x7`. The decoder must reproduce
-    `xfs_db convert` exactly (a Tier-1 structural check).
+    `xfs_db convert` exactly (an independent structural check; self-minted image => Tier-2).
 
 - **The 5 directory formats** (by size / `di_format`):
   1. **Short-form (local, `di_format=1`)** — entries packed inline; parent inode +
@@ -119,7 +119,7 @@ forensic-grade library core). Reuse the `crc` crate (CRC_32_ISCSI) for v5 + flee
 `lamxfs` (cleanest, permissive); cross-check every structure vs `xfs_db` + TSK.
 **Verify `xfuse`'s exact license before close reading.**
 
-## 3. Real sample data + oracle (Tier-1 plan)
+## 3. Real sample data + oracle (Tier-2 self-mint backstop; Tier-1 real corpus pending)
 
 Mint controlled real images on the Parallels Ubuntu VM (`xfsprogs` = `mkfs.xfs`,
 `xfs_db`, `xfs_info`; `sleuthkit` for the second oracle):
@@ -148,7 +148,7 @@ sudo umount mnt
 
 Oracles:
 ```bash
-# A: xfs_db — structural ground truth (Tier-1 for structure)
+# A: xfs_db — structural ground truth (independent oracle; self-minted image => Tier-2)
 xfs_db -r v5.img -c 'sb 0' -c 'print'
 xfs_db -r v5.img -c 'agi 0' -c 'print'      # AGI incl. unlinked[]
 xfs_db -r v5.img -c 'agf 0' -c 'print'
@@ -156,16 +156,19 @@ xfs_db -r v5.img -c 'inode 64' -c 'print'
 xfs_db -r v5.img -c 'convert inode <N> agno' -c 'convert inode <N> agino' \
                  -c 'convert inode <N> agblock' -c 'convert inode <N> offset'
 xfs_db -r v5.img -c 'inode <big_ino>' -c 'bmap'
-# B: The Sleuth Kit — independent second reader (Tier-1 cross-impl)
+# B: The Sleuth Kit — independent second reader (cross-impl; still Tier-2 on a self-minted image)
 fsstat v5.img ; fls -r v5.img ; istat v5.img 64 ; icat v5.img <big_ino> | sha256sum
-# C: mount-ro + sha256 — content Tier-1
+# C: mount-ro + sha256 — content check (Tier-2: self-minted content)
 sudo mount -o ro,loop v5.img mnt; sha256sum mnt/sf/file1.txt mnt/big.bin; sudo umount mnt
 ```
 
-**Corpora:** no well-known public XFS forensic image (CFReDS/Digital Corpora are
-ext/NTFS/FAT/HFS-centric) → treat as **REAL-self Tier-1 via three independent
-oracles** (xfs_db + TSK + mount). A RHEL/CentOS 7+ disk image (RHEL defaults to XFS)
-from a DFIR challenge would be an excellent real corpus if licensing permits.
+**Corpora:** no well-known public XFS forensic image surfaced in the first pass
+(CFReDS/Digital Corpora skew ext/NTFS/FAT/HFS). A self-minted `mkfs.xfs` image is
+**REAL-self = Tier-2** even with three independent oracles (xfs_db + TSK + mount) —
+independence of the *oracle* does not lift a self-authored *artifact* to Tier-1.
+Genuine **Tier-1** needs a *third-party* artifact: a RHEL/Rocky/AlmaLinux/CentOS 7+
+disk image (the RHEL family defaults to XFS), a DFIR-challenge image, or libyal
+`libfsxfs` test data — sourcing this is an open task (in progress).
 Document every minted image's commands in `tests/data/README.md` + the fleet
 `docs/corpus-catalog.md`.
 
@@ -201,7 +204,7 @@ inode-number encoding + five dir formats + self-describing v5 metadata.
   oracle). The ftype byte tracks the fs FEATURE bit (`Superblock::has_ftype`),
   not the v4/v5 version — modern mkfs enables ftype on v4. leaf → node → btree
   handled in P5.
-- **P5 DONE** — two parts, both Tier-1 validated:
+- **P5 DONE** — two parts, both Tier-2 validated (independent oracle, self-minted image):
   - **Part 1: bmap B+tree file read (`di_format=3`, `read_btree_extents`).** The
     inline `xfs_bmdr_block` root (fork: `bb_level`/`bb_numrecs` then keys[dmaxrecs]
     + ptrs[dmaxrecs] at the `4 + dmaxrecs*8` offset) → on-disk bmbt blocks (`BMA3`
@@ -239,7 +242,7 @@ inode-number encoding + five dir formats + self-describing v5 metadata.
   version), `Agf`/`Agi` (`parse_verified(data, is_v5)`; plain `parse` leaves
   `None`), `Agfl` (`parse_v5` verifies, `parse_v4` → `None`), and standalone
   `verify_dir_block_crc` / `verify_bmbt_block_crc` (detect v5 vs v4 by magic).
-  **Oracle (Tier-1, xfsprogs is the independent CRC author):** every unmodified
+  **Oracle (Tier-2; xfsprogs is the independent CRC author, but the image is self-minted):** every unmodified
   metadata block from `v5.img` / `v5frag.img` verifies `Some(true)` — SB, AG-0
   AGF/AGI/AGFL, root inode 128, an `XDD3` dir data block, a da3 leaf/node block,
   a `BMA3` bmbt block; a single flipped byte flips to `Some(false)`; the v4
@@ -281,11 +284,16 @@ principle — the auditor must see slack the reader normalizes):**
 - **F4** Timestamp anomalies (bigtime-vs-classic mismatch, crtime>mtime) — Info leads
   (mirror the timestomp-is-Info fleet stance). **(follow-on)**
 
-**Oracle tiering:** **Structure = Tier-1** (xfs_db + TSK cross-impl + xfs_info/fsstat,
-none ours). **Content = Tier-1** (mount-ro + sha256, icat|sha256). **Deleted-file
-recovery = Tier-2** from self-minted delete cases; strengthen by reconciling vs an
-independent recovery oracle (`xfsr`/`xfs_irecover`) on the same image, explaining
-divergence, per the fleet carving-validation standard.
+**Oracle tiering (corrected — self-minted ≠ Tier-1):** our `v5.img`/`v4.img` are
+**REAL-self = Tier-2** — real `mkfs.xfs` output confirmed by independent oracles
+(xfs_db + TSK + mount-ro/sha256), but *we chose the scenario*, so they can miss
+real-world quirks. A non-ours **oracle** does not make a self-minted **artifact**
+Tier-1; Tier-1 requires a *third-party-authored or real-world* image. So both
+structure and content are validated at **Tier-2** today, and deleted-file recovery
+is also Tier-2 (self-minted delete cases). **Open task:** add a genuine **Tier-1**
+XFS corpus (a real RHEL/Rocky/AlmaLinux/CentOS default-XFS image or a DFIR-challenge
+image, or libyal `libfsxfs` third-party test data) and validate against it with
+xfs_db/TSK as the independent oracle on *their* bytes.
 
 **Gaps to close before coding:** (1) confirm `xfuse`'s exact LICENSE; (2) pull the
 verbatim bmbt bit-field widths from the kernel Data-extents chapter (not memory —
