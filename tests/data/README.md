@@ -1,14 +1,104 @@
 # XFS Forensic Test Data — Provenance
 
-All fixtures here are **REAL-self Tier-1**: minted on a controlled Linux VM with
-`mkfs.xfs` (xfsprogs) and cross-checked against three independent oracles
-(`xfs_db`, `xfs_info`, `mount -o ro` + `sha256sum`). See the fleet catalog at
+Two classes of fixture live here, at two different evidentiary tiers (see
+[`../../docs/validation.md`](../../docs/validation.md) for the full story):
+
+- **REAL-ext Tier-1** — a genuine third-party image, `xfs_dfvfs.raw` (from
+  log2timeline/dfvfs, Apache-2.0), whose answer key comes from oracles we did
+  not author. This is the load-bearing correctness proof; it is committed and
+  its test is always-on.
+- **REAL-self Tier-2** — our own `mkfs.xfs` images, minted on a controlled Linux
+  VM and cross-checked at mint time against `xfs_db` / `xfs_info` / `mount -o ro`
+  + `sha256sum`. These are regression backstops; **self-minted ≠ Tier-1** (we
+  authored both the fixture and the expected answer, so they inherit our blind
+  spots). The 512 MiB `.img` files are gitignored — only the oracle **text
+  outputs** are committed; re-mint from the verbatim commands to reproduce them.
+
+See the fleet catalog at
 [`issen/docs/corpus-catalog.md`](../../../issen/docs/corpus-catalog.md) for the
 machine index; this README is the co-located human detail.
 
-The two 512 MiB images (`v5.img`, `v4.img`) are **gitignored** (see
-`.gitignore`) — only the oracle **text outputs** below are committed. Re-mint
-the images from the verbatim commands to reproduce the corpus.
+<!-- TODO(corpus-catalog): add a REAL-ext row for tests/data/xfs_dfvfs.raw
+     (dfvfs XFS Tier-1, Apache-2.0, md5 5578c5c54ec8055243a40ada1f4d8836) and a
+     gitignored row for xfs-bigtime.raw (md5 390e15e9bb523662e2037ea4c86d9193)
+     to issen/docs/corpus-catalog.md. NOT done here — the issen repo is held by
+     another session; add it there when that session is free. -->
+
+## REAL-ext Tier-1 — dfvfs `xfs_dfvfs.raw` (committed, always-on)
+
+**The genuine third-party Tier-1 image.** `test_data/xfs.raw` from
+[log2timeline/dfvfs](https://github.com/log2timeline/dfvfs) (Joachim Metz),
+committed verbatim as `xfs_dfvfs.raw`. This is the image `libfsxfs` uses as its
+own oracle, so an independent widely-used implementation already agrees on its
+contents.
+
+- **Source:** <https://github.com/log2timeline/dfvfs> — `test_data/xfs.raw`.
+- **Download URL:**
+  <https://raw.githubusercontent.com/log2timeline/dfvfs/main/test_data/xfs.raw>
+- **Size / md5:** 16 MiB (16 777 216 bytes) / `5578c5c54ec8055243a40ada1f4d8836`.
+- **Redistribution:** Apache-2.0 (dfvfs' license) — committable; committed here.
+- **Consumed by:** `core/tests/tier1_dfvfs.rs` (always-on, not env-gated) — the
+  primary correctness gate. Also documented in `docs/validation.md`.
+
+**Ground truth — `xfs_db -r -c 'sb 0' -c print` (xfsprogs 6.6.0):**
+
+```
+magicnum = 0x58465342   blocksize = 4096    inodesize = 512    inopblock = 8
+versionnum = 0xb4b5 (v5)   rootino = 11072   agblocks = 4096    agcount = 1
+blocklog = 12   inodelog = 9   inopblog = 3   agblklog = 12
+features_incompat = 0x3 (FTYPE|SPINODES)   spino_align = 4   crc = 0x7a195fb4 (correct)
+```
+
+Note `rootino = 11072`, **not** 128 — the sparse-inode geometry
+(`spino_align`, `agcount = 1`, `agblklog = 12`) differs from our `mkfs.xfs`
+self-mint (`rootino = 128`, `agcount = 4`). This is the real-world quirk the
+Tier-1 image exists to exercise.
+
+**Ground truth — directory tree + content (`xfs_db inode N print`, and the
+independent `mount -o ro,loop` + `ls -iR` + `sha256sum` kernel oracle):**
+
+| path | inode | kind (ftype) | notes |
+|---|---|---|---|
+| `/a_directory` | 11075 | dir (2) | short-form dir, 2 children |
+| `/a_directory/a_file` | 11076 | file (1) | sha256 `4a49638d…0ec92d` |
+| `/a_directory/another_file` | 11078 | file (1) | sha256 `c7fbc0e8…3b10c16` |
+| `/passwords.txt` | 11077 | file (1) | size 116, extent [startblock 1379, count 1], has a `security.selinux` attr fork; sha256 `02a2a6af2f1ecf4720d7d49d640f0d0a269a7ec733e41973bdd34f09dad0e252` |
+| `/a_link` | 11079 | symlink (7) | → `a_directory/another_file` |
+
+`passwords.txt` content (kernel `cat`): a 5-row CSV led by the header
+`place,user,password`.
+
+## REAL-ext Tier-1 (env-gated) — dfvfs `xfs-bigtime.raw` (NOT committed)
+
+The **bigtime timestamp** oracle — a v5 dfvfs image whose inodes carry
+`XFS_DIFLAG2_BIGTIME`, so timestamps use the 64-bit post-2486 counter
+(`sec = raw/1e9 - 2^31`) rather than the legacy `(sec:i32, nsec:i32)` packing.
+
+- **Source / download URL:**
+  <https://raw.githubusercontent.com/log2timeline/dfvfs/main/test_data/xfs_bigtime.raw>
+- **Size / md5:** 16 MiB / `390e15e9bb523662e2037ea4c86d9193`.
+- **Redistribution:** Apache-2.0.
+- **Committed?** **No** — one committed 16 MiB image (`xfs_dfvfs.raw`) is enough;
+  a second would bloat the repo. Gitignored (`/tests/data/xfs-bigtime.raw`) and
+  **env-gated** on `XFS_BIGTIME_ORACLE` (absolute path to the downloaded file).
+- **Consumed by:** `core/tests/bigtime_dfvfs.rs` — skips cleanly when the env var
+  is unset.
+
+**Ground truth (`TZ=UTC xfs_db -r -c 'inode 16128' -c print`):** rootino 16128,
+versionnum `0xb4b5`; root inode `v3.bigtime = 1`, `di_flags2 = 0x18`;
+mtime = 2026-07-01 13:32:33 UTC = epoch `1782912753`, nsec `497950218`;
+crtime = same second, nsec `68099000`.
+
+---
+
+## REAL-self Tier-2 — self-minted `mkfs.xfs` regression backstops
+
+The images below are **self-minted (Tier-2)** — minted on a controlled Linux VM
+with `mkfs.xfs` and cross-checked at mint time against three oracles (`xfs_db`,
+`xfs_info`, `mount -o ro` + `sha256sum`). They are regression backstops beneath
+the Tier-1 dfvfs image above, never the sole proof for a value-producing path.
+The two 512 MiB images (`v5.img`, `v4.img`) are **gitignored** — only the oracle
+**text outputs** below are committed. Re-mint from the verbatim commands.
 
 ## Minting host
 

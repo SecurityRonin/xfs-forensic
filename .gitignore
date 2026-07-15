@@ -8,3 +8,9 @@
 # TEXT outputs and tests/data/README.md provenance are committed. Re-mint from
 # the recorded mkfs/populate commands.
 /tests/data/*.img
+
+# The dfvfs `xfs-bigtime.raw` Tier-1 image (16 MiB) is NOT committed — one
+# committed 16 MiB image (`xfs_dfvfs.raw`) is enough. It is env-gated on
+# XFS_BIGTIME_ORACLE (see tests/data/README.md). The other Tier-1 `.raw`
+# (`xfs_dfvfs.raw`, Apache-2.0) IS committed, so only the bigtime one is ignored.
+/tests/data/xfs-bigtime.raw

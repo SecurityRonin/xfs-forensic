@@ -12,6 +12,17 @@ readme.workspace = true
 authors.workspace = true
 keywords = ["forensics", "xfs", "dfir", "carving", "anti-forensics"]
 categories.workspace = true
+# Keep the repo-root integration-test tree and its committed 16 MiB oracle image
+# (tests/data/xfs_dfvfs.raw, Apache-2.0) out of the published `.crate`, so the
+# tarball stays well under the ~10 MiB crates.io limit.
+exclude = [
+    "/fuzz",
+    "/.github",
+    "/docs",
+    "/tests",
+    "/tests/data/*.raw",
+    "/tests/data/*.img",
+]
 
 [dependencies]
 xfs-core = { workspace = true }

@@ -16,7 +16,18 @@ categories.workspace = true
 # tests/data via include_bytes!/env-gated paths, outside this package. They are
 # repo-CI artifacts, not consumer-facing — excluding them keeps the published
 # tarball self-contained.
-exclude = ["/fuzz", "/.github", "/docs", "/tests"]
+# `/tests` already keeps the whole integration-test tree (incl. tests/data) out
+# of the tarball; the explicit `*.raw`/`*.img` globs are belt-and-suspenders so a
+# committed 16 MiB oracle image (tests/data/xfs_dfvfs.raw) can never sneak into
+# the published `.crate` and breach the ~10 MiB crates.io limit.
+exclude = [
+    "/fuzz",
+    "/.github",
+    "/docs",
+    "/tests",
+    "/tests/data/*.raw",
+    "/tests/data/*.img",
+]
 
 # The bare `xfs` crate name on crates.io is an abandoned 2016 perf-data parser
 # (unrelated to the filesystem, not popular), so we take the import path `xfs`.
