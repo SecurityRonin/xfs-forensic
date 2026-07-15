@@ -247,24 +247,39 @@ inode-number encoding + five dir formats + self-describing v5 metadata.
   all file formats (inline/extents/btree) + all dir formats and validates v5
   self-describing metadata.
 
-**Next: `xfs-forensic` F1–F4** (analyzer layer) — deleted-inode recovery,
-directory-slack residue, structural integrity (F3 consumes P6's `crc_valid`),
-timestamp anomalies.
+**`xfs-forensic` analyzer status — F1 + F3 DONE; F2 + F4 follow-on.**
 
 **`xfs-forensic` (analyzer, over raw `Read+Seek`/bytes per the reader/analyzer-split
 principle — the auditor must see slack the reader normalizes):**
-- **F1** Deleted-inode recovery — on delete XFS zeroes only mode/nlink/size/nblocks/
-  nextents + attr-fork offset; **the extent records + attr data at inode offset 176
-  survive**, ctime becomes deletion time, generation increments → carve residual
-  extents. High-value, distinctive.
+- **F1 — DONE.** Deleted-inode recovery. On delete XFS zeroes only mode/nlink/size/
+  nblocks/nextents; **the extent records at inode offset 176 (v3) can survive**, ctime
+  becomes deletion time, generation increments. `recover_deleted` sweeps the inode
+  space for freed (`di_mode == 0`) v3 inodes, decodes the residual `xfs_bmbt_rec`
+  records directly from the fork (`di_nextents` is zeroed, so it cannot be counted),
+  and carves the content via the extent reader → `XFS-DELETED-INODE-CARVED`.
+  Validated against xfs_db ground truth on the committed 512-byte freed-inode fixture
+  (`[startoff=0, startblock=32, blockcount=8]`, ctime, size).
+  **Kernel-dependent residue caveat (Doer-Checker, verified 2026-07-15):** residual
+  extent survival is *not* deterministic. Re-minting the delete case on the current
+  Ubuntu kernel zeroes the inode data fork on inactivation (measured: freed-with-fork
+  count 0, even pre-unmount), so no extents survive a clean delete there. The committed
+  fixture comes from the original image where they *did* survive; the env-gated
+  full-image carve-hash gate (`XFS_DEL_ORACLE`) therefore requires a residue-bearing
+  image and is not reproducible by re-mint on this kernel. Recovery is correct — it
+  carves residue when present and finds nothing when the fork is zeroed.
 - **F2** Directory-slack residue — short-form tail entries in inode slack; block-dir
   freed dirent keeps its 32-bit inode number (inumber→0xFFFF but original often
-  readable) → recover deleted filenames + links.
-- **F3** Structural integrity — v5 CRC mismatch, owner/blkno mismatch (relocation),
-  SB-vs-secondary divergence, AGI `unlinked[]` non-empty (orphaned open inodes),
-  impossible geometry (allocation-bomb guards).
+  readable) → recover deleted filenames + links. **(follow-on)**
+- **F3 — DONE.** Structural integrity. `audit_image` parses the primary superblock
+  over its sector (correct CRC coverage), walks every AG that fits the image, and emits
+  `XFS-CRC-MISMATCH` (superblock / AGF / AGI / inode — the inode sweep gated on the
+  `di_ino` self-reference so a stray `IN` in file data cannot mis-flag),
+  `XFS-SB-MIRROR-DIVERGENCE` (secondary-SB geometry vs AG-0), `XFS-ORPHANED-INODE`
+  (AGI `unlinked[64]`), and `XFS-IMPOSSIBLE-GEOMETRY` (allocation-bomb guards). Clean
+  v5 image emits nothing; crafted corruption detected for each code. Directory-block
+  and bmbt-block CRC checking is deferred to F2.
 - **F4** Timestamp anomalies (bigtime-vs-classic mismatch, crtime>mtime) — Info leads
-  (mirror the timestomp-is-Info fleet stance).
+  (mirror the timestomp-is-Info fleet stance). **(follow-on)**
 
 **Oracle tiering:** **Structure = Tier-1** (xfs_db + TSK cross-impl + xfs_info/fsstat,
 none ours). **Content = Tier-1** (mount-ro + sha256, icat|sha256). **Deleted-file

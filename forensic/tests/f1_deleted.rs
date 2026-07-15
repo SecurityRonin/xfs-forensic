@@ -113,6 +113,20 @@ fn carves_deleted_content_matching_original_sha256() {
     assert_eq!(hit.recovered_size_estimate, 32768);
 }
 
+// ── degenerate geometry short-circuits before the sweep ───────────────────────
+
+#[test]
+fn recover_deleted_tiny_inode_size_returns_empty() {
+    let mut img = std::fs::read(data_path("v5.img")).unwrap_or_default();
+    if img.is_empty() {
+        return;
+    }
+    img[104..106].copy_from_slice(&128u16.to_be_bytes()); // sb_inodesize = 128 (< 176)
+    let sb = xfs::Superblock::parse(&img).unwrap();
+    // A sub-core inode size can hold no v3 fork extents → early return, no work.
+    assert!(recover_deleted(&img, &sb).is_empty());
+}
+
 // ── no-panic on malformed input ───────────────────────────────────────────────
 
 #[test]

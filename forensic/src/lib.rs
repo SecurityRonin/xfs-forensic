@@ -367,8 +367,8 @@ pub fn audit_image(image: &[u8]) -> Vec<Anomaly> {
                                     }));
                                 }
                             }
-                        }
-                    }
+                        } // cov:unreachable: Inode::parse cannot fail after the IN magic check on a full inode-size slice
+                    } // cov:unreachable: image.get is in range by the while-guard bound
                 }
                 off = off.saturating_add(inode_size);
             }
@@ -507,10 +507,10 @@ pub fn recover_deleted(image: &[u8], sb: &Superblock) -> Vec<DeletedInode> {
                                 recovered_size_estimate,
                                 carved,
                             });
-                        }
+                        } // cov:unreachable: a superblock from a real image has nonzero agblocks, so offset_to_inode resolves
                     }
                 }
-            }
+            } // cov:unreachable: Inode::parse cannot fail after the IN magic check on a full inode-size slice
         }
         off = off.saturating_add(inode_size);
     }
@@ -604,4 +604,50 @@ fn be_u32(d: &[u8], o: usize) -> u32 {
     d.get(o..o.saturating_add(4))
         .and_then(|b| <[u8; 4]>::try_from(b).ok())
         .map_or(0, u32::from_be_bytes)
+}
+
+#[cfg(test)]
+mod unit {
+    use super::{be_u16, be_u32, decode_residual, image_len_blocks};
+
+    #[test]
+    fn be_readers_yield_zero_out_of_range() {
+        assert_eq!(be_u16(&[0x12], 0), 0); // slice too short
+        assert_eq!(be_u16(&[0x12, 0x34], 0), 0x1234);
+        assert_eq!(be_u32(&[0, 0, 0], 0), 0); // slice too short
+        assert_eq!(be_u32(&[0, 0, 0, 5], 0), 5);
+    }
+
+    #[test]
+    fn image_len_blocks_divides_by_block_size() {
+        assert_eq!(image_len_blocks(4096 * 10, 4096), 10);
+    }
+
+    #[test]
+    fn decode_residual_stops_at_each_boundary() {
+        // empty fork and an all-zero record both yield nothing.
+        assert!(decode_residual(&[], 100).is_empty());
+        assert!(decode_residual(&[0u8; 16], 100).is_empty());
+
+        // one real extent [startoff=0, startblock=32, blockcount=8] then zeros.
+        let mut fork = vec![0u8; 48];
+        fork[8..16].copy_from_slice(&0x0400_0008u64.to_be_bytes()); // l1
+        let recs = decode_residual(&fork, 131_072);
+        assert_eq!(recs.len(), 1);
+        assert_eq!(recs[0].startblock, 32);
+        assert_eq!(recs[0].blockcount, 8);
+
+        // same extent but the image is too small to hold it → out-of-range stop.
+        assert!(decode_residual(&fork, 10).is_empty());
+
+        // blockcount == 0 (nonzero l0 startoff, zero l1) → stop.
+        let mut zero_count = vec![0u8; 16];
+        zero_count[0..8].copy_from_slice(&0x0000_0200u64.to_be_bytes()); // l0 only
+        assert!(decode_residual(&zero_count, 100).is_empty());
+
+        // startblock == 0 (blockcount 8, no start block) → stop (block 0 is the SB).
+        let mut zero_start = vec![0u8; 16];
+        zero_start[8..16].copy_from_slice(&0x0000_0008u64.to_be_bytes());
+        assert!(decode_residual(&zero_start, 100).is_empty());
+    }
 }

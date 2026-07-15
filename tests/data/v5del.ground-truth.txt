@@ -31,3 +31,11 @@ Full image del.img (512 MiB, GITIGNORED, sha256 98709b6e5fd72eb5a0d5e630e5b599de
   Note: the committed v5.img does NOT retain deleted-extent residue — its rm'd file was a 10-byte
   inline (Local-format) file with no extents, and its other freed inode slots are born-zeroed
   preallocated chunks. This dedicated extent-format deletion case is the proper F1 oracle.
+
+Reproducibility caveat (verified 2026-07-15, same VM): re-running the mint procedure above on the
+current Ubuntu kernel ZEROES the inode data fork on inactivation — the freed inode has mode=0 /
+nextents=0 AND fork@176 all-zero (measured: freed-with-fork count 0 across the whole image, even
+capturing pre-unmount). So residual-extent survival is kernel/state-dependent and a re-mint does
+NOT reproduce this oracle. The committed 512-byte v5del.freed_inode.bin (from the original
+residue-bearing del.img) is the durable decode oracle; the env-gated carve-hash test
+(XFS_DEL_ORACLE) needs a residue-bearing full image, not a fresh re-mint.
