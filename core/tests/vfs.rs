@@ -197,3 +197,83 @@ fn deleted_unallocated_readlink_defaults() {
     // read_link on a non-symlink (the root dir) reads as an empty target.
     assert_eq!(vfs.read_link(vfs.root(), 4096).unwrap(), Vec::<u8>::new());
 }
+
+#[test]
+fn geometry_and_zone_reported() {
+    let Some(img) = v5_image() else {
+        eprintln!("skip: v5 image absent");
+        return;
+    };
+    let fs = XfsFs::open(&mem(img.clone())).expect("mount xfs");
+    let vfs: &dyn FileSystem = &fs;
+    let sizes = vfs.sector_sizes();
+    assert_eq!(sizes.logical, 512);
+    // v5.img blocksize is 4096 (SGI XFS file(1) header).
+    let sb = Superblock::parse(&img).unwrap();
+    assert_eq!(sizes.cluster_or_block, sb.blocksize);
+    assert_eq!(vfs.timestamp_zone(), forensic_vfs::TimeZonePolicy::Utc);
+}
+
+#[test]
+fn extents_on_a_directory_is_empty_and_named_stream_refused() {
+    let Some(img) = v5_image() else {
+        eprintln!("skip: v5 image absent");
+        return;
+    };
+    let fs = XfsFs::open(&mem(img)).expect("mount xfs");
+    let vfs: &dyn FileSystem = &fs;
+    // The root is a short-form (Local) directory -> no inline extent array, so
+    // extents() takes the non-Extents arm and yields nothing.
+    let runs: Vec<_> = vfs
+        .extents(vfs.root(), StreamId::Default)
+        .unwrap()
+        .filter_map(Result::ok)
+        .collect();
+    assert!(
+        runs.is_empty(),
+        "a Local-format dir has no data-fork extents"
+    );
+
+    // A named/slack stream is refused loud on both extents and read_at.
+    assert!(vfs.extents(vfs.root(), StreamId::Slack).is_err());
+    assert!(vfs
+        .read_at(vfs.root(), StreamId::Named(1), 0, &mut [0u8; 4])
+        .is_err());
+}
+
+#[test]
+fn read_at_past_eof_reads_zero() {
+    let Some(img) = v5_image() else {
+        eprintln!("skip: v5 image absent");
+        return;
+    };
+    let fs = XfsFs::open(&mem(img.clone())).expect("mount xfs");
+    let vfs: &dyn FileSystem = &fs;
+    let sf = vfs.lookup(vfs.root(), b"sf").unwrap().unwrap();
+    let file1 = vfs.lookup(sf, b"file1.txt").unwrap().unwrap();
+    let size = vfs.meta(file1).unwrap().size;
+    // A start at/after EOF yields zero bytes, never a panic.
+    let mut buf = [0u8; 16];
+    assert_eq!(
+        vfs.read_at(file1, StreamId::Default, size + 100, &mut buf)
+            .unwrap(),
+        0
+    );
+}
+
+#[test]
+fn out_of_image_inode_maps_to_out_of_range() {
+    let Some(img) = v5_image() else {
+        eprintln!("skip: v5 image absent");
+        return;
+    };
+    let fs = XfsFs::open(&mem(img)).expect("mount xfs");
+    let vfs: &dyn FileSystem = &fs;
+    // An inode number whose located byte window lies past the image end -> the
+    // reader's Truncated error, mapped to VfsError::OutOfRange (not Decode).
+    let bogus = forensic_vfs::FileId::Opaque(u64::MAX / 2);
+    assert!(matches!(
+        vfs.meta(bogus),
+        Err(forensic_vfs::VfsError::OutOfRange { .. })
+    ));
+}
