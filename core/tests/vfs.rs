@@ -6,7 +6,7 @@
 //! must surface exactly what the underlying `xfs-core` reader surfaces), plus
 //! the probe (v5.img sniffs as an XFS candidate; random bytes do not).
 //!
-//! Env-gated on `XFS_ORACLE_V5_IMG` (the 512 MiB image is gitignored — see
+//! Env-gated on `XFS_ORACLE_V5_IMG` (the 512 `MiB` image is gitignored — see
 //! `tests/data/README.md`); the tests skip cleanly when the image is absent.
 
 #![cfg(feature = "vfs")]
@@ -83,7 +83,7 @@ fn kind_root_and_zone() {
         eprintln!("skip: v5 image absent");
         return;
     };
-    let fs = XfsFs::open(mem(img.clone())).expect("mount xfs");
+    let fs = XfsFs::open(&mem(img.clone())).expect("mount xfs");
     let vfs: &dyn FileSystem = &fs;
     assert_eq!(vfs.kind(), FsKind::Xfs);
     // The root maps to the superblock's root inode number.
@@ -99,7 +99,7 @@ fn read_dir_root_matches_reader() {
         eprintln!("skip: v5 image absent");
         return;
     };
-    let fs = XfsFs::open(mem(img.clone())).expect("mount xfs");
+    let fs = XfsFs::open(&mem(img.clone())).expect("mount xfs");
     let vfs: &dyn FileSystem = &fs;
 
     // The adapter's listing must equal the reader's own read_dir on the root.
@@ -134,7 +134,7 @@ fn lookup_read_matches_read_by_path() {
         eprintln!("skip: v5 image absent");
         return;
     };
-    let fs = XfsFs::open(mem(img.clone())).expect("mount xfs");
+    let fs = XfsFs::open(&mem(img.clone())).expect("mount xfs");
     let vfs: &dyn FileSystem = &fs;
 
     // Navigate root -> sf -> file1.txt through the trait object.
@@ -169,7 +169,7 @@ fn missing_child_is_none_and_foreign_id_is_refused() {
         eprintln!("skip: v5 image absent");
         return;
     };
-    let fs = XfsFs::open(mem(img)).expect("mount xfs");
+    let fs = XfsFs::open(&mem(img)).expect("mount xfs");
     let vfs: &dyn FileSystem = &fs;
     assert!(vfs.lookup(vfs.root(), b"does-not-exist").unwrap().is_none());
     // A non-XFS FileId identity is a caller error, surfaced loud.
@@ -181,7 +181,7 @@ fn missing_child_is_none_and_foreign_id_is_refused() {
 #[test]
 fn open_on_garbage_fails_loud() {
     // No XFSB magic -> Superblock::parse fails -> loud error, never a silent mount.
-    assert!(XfsFs::open(mem(vec![0u8; 4096])).is_err());
+    assert!(XfsFs::open(&mem(vec![0u8; 4096])).is_err());
 }
 
 #[test]
@@ -190,7 +190,7 @@ fn deleted_unallocated_readlink_defaults() {
         eprintln!("skip: v5 image absent");
         return;
     };
-    let fs = XfsFs::open(mem(img)).expect("mount xfs");
+    let fs = XfsFs::open(&mem(img)).expect("mount xfs");
     let vfs: &dyn FileSystem = &fs;
     assert_eq!(vfs.deleted().unwrap().count(), 0);
     assert_eq!(vfs.unallocated().unwrap().count(), 0);
