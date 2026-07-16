@@ -497,6 +497,8 @@ mod tests {
         let img = image_with_local_symlink(target);
         let fs = XfsFs::open(&(StdArc::new(Bytes(img)) as DynSource)).unwrap();
         let vfs: &dyn FileSystem = &fs;
+        // Covers the constant `kind()` without the env-gated v5 oracle image.
+        assert_eq!(vfs.kind(), FsKind::XFS);
         let link = FileId::Opaque(8);
         // The node is a symlink and its target is the inline string, verbatim.
         assert_eq!(vfs.meta(link).unwrap().kind, NodeKind::Symlink);
