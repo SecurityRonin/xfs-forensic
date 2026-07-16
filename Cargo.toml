@@ -5,9 +5,17 @@ members = ["core", "forensic"]
 # Single source of truth for fields shared (identical) by every member (DRY).
 # `version` is NOT hoisted: core and forensic are versioned independently, so
 # each keeps its own `version` inline.
+#
+# `rust-version` is the CI-verified MSRV floor. xfs-core's own code compiles as
+# low as 1.75; the floor is dictated by a dependency, not our source. The
+# batteries-included CRC32c decoder (`crc = "3"`) resolves to `crc 3.4.0`, which
+# declares `rust-version = 1.83`, so a plain `cargo build -p xfs-core` (default
+# resolution) fails below 1.83. Per the fleet library policy we keep the floor
+# as low as the deps allow and verify it in the `msrv` CI job — rather than
+# advertise 1.75 that default resolution cannot actually honour.
 [workspace.package]
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.83"
 license = "Apache-2.0"
 repository = "https://github.com/SecurityRonin/xfs-forensic"
 homepage = "https://github.com/SecurityRonin/xfs-forensic"
