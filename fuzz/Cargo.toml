@@ -1,0 +1,83 @@
+[package]
+name = "xfs-forensic-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+# Standalone workspace: the fuzz crate must not be pulled into the parent
+# (core/forensic) workspace, whose virtual root manifest is not a package.
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+# The fuzzed structures (superblock, AG headers, inode, extent, bmbt, directory
+# formats, crc) are the reader's — they live in xfs-core (imported as `xfs`).
+[dependencies.xfs-core]
+path = "../core"
+
+# The full inspect/audit + carve pipeline lives in xfs-forensic.
+[dependencies.xfs-forensic]
+path = "../forensic"
+
+[[bin]]
+name = "superblock"
+path = "fuzz_targets/superblock.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "agheaders"
+path = "fuzz_targets/agheaders.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "inode"
+path = "fuzz_targets/inode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "extent"
+path = "fuzz_targets/extent.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "btree"
+path = "fuzz_targets/btree.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "dir"
+path = "fuzz_targets/dir.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "crc"
+path = "fuzz_targets/crc.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_forensic"
+path = "fuzz_targets/fuzz_forensic.rs"
+test = false
+doc = false
+bench = false
+
+[profile.release]
+debug = 1
