@@ -73,6 +73,14 @@ agrees on its contents.
 5. `inode_to_location(11072)` lands on the byte offset the sparse-inode geometry
    dictates, and the parsed inode's `di_ino` self-reference matches.
 
+**Run command.** This image is **committed** (excluded from the crate tarball
+via `exclude` / `.gitignore` rules), so a clean clone already has it — no
+download needed:
+
+```bash
+cargo test -p xfs-core --test tier1_dfvfs
+```
+
 **Result.** All assertions pass: `xfs-core` reads the real third-party image
 correctly on the first pass. The `rootino = 11072`, `agblklog = 12`,
 single-AG geometry — which our self-mint never produced — decodes correctly, so
@@ -99,6 +107,37 @@ branch (BIGTIME bit set) and decodes mtime/crtime to the exact UTC epoch the
 oracle reports. A legacy decode of the same raw `__be64` would yield a wildly
 different value, so this pins the bigtime math specifically. Passes with the
 image present, skips cleanly without.
+
+**Run command** (after downloading the image to any path):
+
+```bash
+XFS_BIGTIME_ORACLE=/abs/path/to/xfs-bigtime.raw \
+  cargo test -p xfs-core --test bigtime_dfvfs
+```
+
+## Reproduce Tier-1 from a clean clone
+
+Both Tier-1 checks below run from a fresh `git clone` with no local corpus of
+your own.
+
+1. **`xfs_dfvfs.raw` (always-on, committed).** Already present in the clone.
+   Verify + run:
+   ```bash
+   md5 tests/data/xfs_dfvfs.raw      # == 5578c5c54ec8055243a40ada1f4d8836
+   cargo test -p xfs-core --test tier1_dfvfs
+   ```
+2. **`xfs-bigtime.raw` (env-gated, not committed).** Download, verify, run:
+   ```bash
+   curl -L -o /tmp/xfs-bigtime.raw \
+     https://raw.githubusercontent.com/log2timeline/dfvfs/main/test_data/xfs_bigtime.raw
+   md5 /tmp/xfs-bigtime.raw          # == 390e15e9bb523662e2037ea4c86d9193
+   XFS_BIGTIME_ORACLE=/tmp/xfs-bigtime.raw \
+     cargo test -p xfs-core --test bigtime_dfvfs
+   ```
+
+Both images are dfvfs `test_data`, Apache-2.0 (freely redistributable);
+`xfs_dfvfs.raw` is committed because 16 MiB is acceptable, the second is
+gitignored to avoid doubling that.
 
 ## Tier-2 — self-minted regression backstops
 
