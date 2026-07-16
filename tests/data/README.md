@@ -346,3 +346,25 @@ the minted corpus is green, while a local run with the corpus present validates
 against the oracle. Default path (when unset): `tests/data/v5.img` /
 `tests/data/v4.img` / `tests/data/v4dir.img` / `tests/data/v5frag.img` (the P5
 btree-format fragmented file).
+
+## SYNTHETIC crafted in-code fixtures (CI coverage path — no external oracle)
+
+The `Coverage (100% lines)` CI job runs `cargo llvm-cov --workspace --all-features`
+on a runner that has ONLY the committed data (the env-gated 512 `MiB` images are
+absent). To carry every reader/auditor line without an external oracle, these
+tests craft VALID on-disk XFS structures in code (correct magics + coherent
+geometry — never a special case in the reader) or reuse the always-on committed
+`xfs_dfvfs.raw` (and the committed 512-byte `v5del.freed_inode.bin`). No new data
+file is committed; the fixtures are built by these functions:
+
+| fixture (builder fn) | file:fn | drives |
+|---|---|---|
+| two-AG v5 / v4 image (diverged AG-1 backup SB + valid AGF/AGI magics) | `forensic/tests/f3_integrity.rs` → `two_ag()` / `two_ag_v5()` / `two_ag_v4()` (+ `write_sb`, `write_ag_headers`) | `audit_image` secondary-SB divergence walk (`push_sb_divergence`), the `agno >= 1` branch, `Agf`/`Agi::parse_verified`, and the v4 skip-CRC path |
+| corruptions over a copy of committed `xfs_dfvfs.raw` (byte-flip inode/SB/AGF/AGI, craft AGI unlinked bucket, absurd/zero agcount) | `forensic/tests/f3_integrity.rs` (crafted over `dfvfs()`) | every `audit_image` CRC / orphan / geometry push branch + the clean walk |
+| committed `v5del.freed_inode.bin` spliced into a copy of `xfs_dfvfs.raw` | `forensic/tests/f1_deleted.rs` → `recovers_freed_inode_residual_extent_from_fixture` | `recover_deleted` residual-extent decode (always-on) |
+| crafted v5 SB + block / multi-block directory + btree-format file inodes; direct `verify_bmbt_block_crc` / `verify_dir_block_crc` / `Agfl::parse_v5` calls; crafted v4 SB | `core/tests/crafted_coverage.rs` (`v5_sb`, `stamp_inode`, `pack`) | `read_dir` block (`read_file`→`read_block_dir`) + multi-block (`read_multiblock_dir`) dispatch, btree `read_file`, the v5 dir/bmbt CRC-claim arms, v5 AGFL parse, v4 `has_ftype`, inode `is_reg`/`data_fork_offset` |
+| `read_by_path` not-found arms over committed `xfs_dfvfs.raw` | `core/tests/crafted_coverage.rs` → `read_by_path_*_is_not_found` | missing-component / non-dir-intermediate / empty-path `PathNotFound` |
+
+The env-gated Tier-1 correctness tests above are unchanged: when the minted
+images are present the same behaviours are re-validated against a genuine
+`mkfs.xfs` filesystem; absent, they skip while the crafted path keeps CI green.
