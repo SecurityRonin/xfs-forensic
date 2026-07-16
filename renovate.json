@@ -18,7 +18,7 @@
     {
       "description": "Group fleet (SecurityRonin) crates into one PR wave.",
       "matchManagers": ["cargo"],
-      "matchPackageNames": ["/^xfs-/", "forensicnomicon", "forensic-vfs"],
+      "matchPackageNames": ["/^xfs-/", "forensicnomicon"],
       "groupName": "fleet crates"
     }
   ]

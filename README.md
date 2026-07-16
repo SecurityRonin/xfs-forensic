@@ -109,10 +109,6 @@ Most XFS crates answer one question: "what files are on this volume?" This works
 | `read_shortform_dir` / `read_block_dir` / `read_data_dir_block` / `read_by_path` | Directory decode across all shapes + path resolution |
 | `crc_status` / `verify_crc` / `verify_dir_block_crc` / `verify_bmbt_block_crc` | v5 CRC32c verification (v4 → `None`, no false positives) |
 
-### Optional `vfs` feature (forensic-vfs adapter)
-
-`xfs-core` carries an optional `vfs` feature that adapts `XfsFs` onto the [forensic-vfs](https://crates.io/crates/forensic-vfs) read-only `FileSystem` contract, so an XFS volume composes as `Arc<dyn FileSystem>` in the forensic-vfs engine. It needs the `FsKind::Xfs` variant, an in-flight change to the forensic-vfs leaf **not yet on crates.io** — the default (non-`vfs`) publish is unaffected; the `vfs` feature becomes publishable once forensic-vfs 0.2.0 ships.
-
 ---
 
 [Privacy Policy](https://securityronin.github.io/xfs-forensic/privacy/) · [Terms of Service](https://securityronin.github.io/xfs-forensic/terms/) · © 2026 Security Ronin Ltd

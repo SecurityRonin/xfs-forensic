@@ -32,17 +32,9 @@ forensicnomicon = "1"
 thiserror = "2"
 # CRC32c (Castagnoli / iSCSI polynomial) for v5 self-describing metadata.
 crc = "3"
-# forensic-vfs (KNOWLEDGE leaf) — the read-only FileSystem navigation contract
-# the `vfs` feature adapts XfsFs onto. Optional per-member.
-forensic-vfs = "0.1"
-
-# The `FsKind::Xfs` variant this adapter needs is an in-flight change to the
-# forensic-vfs leaf, not yet on crates.io. Until forensic-vfs 0.2.0 is published,
-# resolve it to the local checkout so the `vfs` feature compiles (mirrors the
-# forensic-vfs engine branch, which patches the same crate to unify trait impls).
-# Remove this patch and bump the dep to the published version once 0.2.0 ships.
-[patch.crates-io]
-forensic-vfs = { path = "../forensic-vfs/crates/core" }
+# NOTE: the `vfs` FileSystem-adapter feature (core/src/vfs.rs) is deferred — it
+# needs forensic-vfs 0.2.0 (an in-flight, unpublished sibling). Restore the dep,
+# the `vfs` feature, and the adapter from git history once 0.2.0 is on crates.io.
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
