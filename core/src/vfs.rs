@@ -167,7 +167,7 @@ fn to_ts(ts: XfsTimestamp) -> TimeStamp {
 
 impl FileSystem for XfsFs {
     fn kind(&self) -> FsKind {
-        FsKind::Xfs
+        FsKind::XFS
     }
 
     fn root(&self) -> FileId {

@@ -85,7 +85,7 @@ fn kind_root_and_zone() {
     };
     let fs = XfsFs::open(&mem(img.clone())).expect("mount xfs");
     let vfs: &dyn FileSystem = &fs;
-    assert_eq!(vfs.kind(), FsKind::Xfs);
+    assert_eq!(vfs.kind(), FsKind::XFS);
     // The root maps to the superblock's root inode number.
     let sb = Superblock::parse(&img).unwrap();
     let meta = vfs.meta(vfs.root()).unwrap();
