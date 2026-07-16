@@ -26,6 +26,8 @@ mod error;
 mod extent;
 mod inode;
 mod superblock;
+#[cfg(feature = "vfs")]
+pub mod vfs;
 
 pub use agheaders::{
     Agf, Agfl, Agi, XFS_AGFL_MAGIC, XFS_AGF_MAGIC, XFS_AGI_MAGIC, XFS_AGI_UNLINKED_BUCKETS,

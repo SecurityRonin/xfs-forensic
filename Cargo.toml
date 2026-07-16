@@ -27,14 +27,14 @@ readme = "README.md"
 # members write `dep.workspace = true`. The inter-crate `xfs-core` version
 # lives here too, so a bump touches one line instead of every member.
 [workspace.dependencies]
-xfs-core = { path = "core", version = "0.1.0" }
+xfs-core = { path = "core", version = "0.1.1" }
 forensicnomicon = "1"
 thiserror = "2"
 # CRC32c (Castagnoli / iSCSI polynomial) for v5 self-describing metadata.
 crc = "3"
-# NOTE: the `vfs` FileSystem-adapter feature (core/src/vfs.rs) is deferred — it
-# needs forensic-vfs 0.2.0 (an in-flight, unpublished sibling). Restore the dep,
-# the `vfs` feature, and the adapter from git history once 0.2.0 is on crates.io.
+# forensic-vfs (KNOWLEDGE leaf) — the read-only FileSystem navigation contract the
+# `vfs` feature adapts XfsFs onto. Published on crates.io (0.2 exposes FsKind::Xfs).
+forensic-vfs = "0.2"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
