@@ -27,7 +27,7 @@ readme = "README.md"
 # members write `dep.workspace = true`. The inter-crate `xfs-core` version
 # lives here too, so a bump touches one line instead of every member.
 [workspace.dependencies]
-xfs-core = { path = "core", version = "0.1.2" }
+xfs-core = { path = "core", version = "0.1.4" }
 forensicnomicon = "1"
 thiserror = "2"
 # CRC32c (Castagnoli / iSCSI polynomial) for v5 self-describing metadata.
