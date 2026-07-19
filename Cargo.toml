@@ -35,7 +35,7 @@ crc = "3"
 # forensic-vfs (KNOWLEDGE leaf) — the read-only FileSystem navigation contract the
 # `vfs` feature adapts XfsFs onto. Published on crates.io (0.3 exposes the
 # string-backed FsKind newtype re-exported from forensicnomicon-core: FsKind::XFS).
-forensic-vfs = "0.4"
+forensic-vfs = "0.5"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
