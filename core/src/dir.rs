@@ -243,11 +243,11 @@ pub fn read_block_dir(block: &[u8], has_ftype: bool) -> Result<Vec<DirEntry>, Xf
 /// bytes.
 ///
 /// Unlike a single block, a multi-block data block has **no block tail** — the
-/// leaf/hash index lives in separate blocks (above [`XFS_DIR2_LEAF_OFFSET`]), so
-/// the data entries run from the header end to the end of the block. The entry
-/// records are identical to the single-block format (`xfs_dir2_data_entry`), so
-/// the same [`walk_data_entries`] walker is reused with the region end set to
-/// the full block length.
+/// leaf/hash index lives in separate blocks (above the crate-private
+/// `XFS_DIR2_LEAF_OFFSET`), so the data entries run from the header end to the
+/// end of the block. The entry records are identical to the single-block format
+/// (`xfs_dir2_data_entry`), so the same crate-private `walk_data_entries` walker
+/// is reused with the region end set to the full block length.
 ///
 /// `has_ftype` selects the per-entry ftype byte. Bounds-stopping and panic-free.
 ///
