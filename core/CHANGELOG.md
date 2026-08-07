@@ -5,6 +5,12 @@ here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.6](https://github.com/SecurityRonin/xfs-forensic/compare/xfs-core-v0.1.5...xfs-core-v0.1.6) - 2026-08-07
+
+### Fixed
+
+- *(docs)* repair intra-doc links the rustdoc gate rejects
+
 ## [0.1.4]
 
 ### Fixed
