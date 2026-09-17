@@ -3,13 +3,13 @@
 //! Nothing in this crate read the attribute fork before this test. `di_forkoff`
 //! and `di_aformat` were parsed and then unused, so every XFS image presented
 //! files with no attributes — indistinguishable from files that have none. On
-//! Linux that silently drops SELinux labels, capabilities and POSIX ACLs.
+//! Linux that silently drops `SELinux` labels, capabilities and POSIX `ACLs`.
 //!
 //! ## The oracle is the Linux XFS driver
 //!
 //! `tests/data/xfs_xattr.img.gz` was made by `mkfs.xfs` and populated through a
 //! real mount; the kernel wrote every attribute and `getfattr` read them all
-//! back before the filesystem was unmounted. SELinux was active, so it added
+//! back before the filesystem was unmounted. `SELinux` was active, so it added
 //! its own `security.selinux` label to each file — unplanned, and kept: it is
 //! exactly the attribute a forensic reader must not lose.
 //!

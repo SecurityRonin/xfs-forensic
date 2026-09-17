@@ -460,7 +460,7 @@ fn read_dir_btree_format_walks_via_bmbt() {
     ib[2..4].copy_from_slice(&0o040_700u16.to_be_bytes()); // dir mode
     ib[4] = 3; // di_version = v3
     ib[5] = 3; // di_format = BTREE
-    let inode = Inode::parse(&ib).unwrap();
+    let inode = Inode::parse(&ib, false).unwrap();
     assert_eq!(inode.format, InodeFormat::Btree);
     let entries = read_dir(&img, &sb, &inode).expect("btree dir is handled, not a loud fail");
     assert!(
@@ -482,7 +482,7 @@ fn read_dir_dev_format_is_unsupported_and_names_format() {
     ib[2..4].copy_from_slice(&0o040_700u16.to_be_bytes()); // dir mode
     ib[4] = 3; // di_version = v3
     ib[5] = 0; // di_format = DEV
-    let inode = Inode::parse(&ib).unwrap();
+    let inode = Inode::parse(&ib, false).unwrap();
     assert_eq!(inode.format, InodeFormat::Dev);
     match read_dir(&img, &sb, &inode) {
         Err(XfsError::UnsupportedDir { detail }) => {

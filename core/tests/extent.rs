@@ -357,7 +357,7 @@ fn read_file_local_format_inode_yields_zerofill() {
     for (i, b) in ib.iter_mut().enumerate().skip(176).take(12) {
         *b = u8::try_from(i & 0xff).unwrap(); // arbitrary inline bytes
     }
-    let inode = Inode::parse(&ib).unwrap();
+    let inode = Inode::parse(&ib, false).unwrap();
     assert_eq!(inode.format, InodeFormat::Local);
 
     let out = sb

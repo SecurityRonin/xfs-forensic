@@ -358,7 +358,7 @@ pub fn audit_image(image: &[u8]) -> Vec<Anomaly> {
             while off.saturating_add(inode_size) <= image.len() {
                 if be_u16(image, off) == XFS_DINODE_MAGIC {
                     if let Some(slice) = image.get(off..off.saturating_add(inode_size)) {
-                        if let Ok(inode) = Inode::parse(slice) {
+                        if let Ok(inode) = Inode::parse(slice, false) {
                             if let Some((_, ino)) = offset_to_inode(&sb, off as u64) {
                                 if inode.di_ino == Some(ino) && inode.crc_valid == Some(false) {
                                     out.push(Anomaly::new(AnomalyKind::CrcMismatch {
@@ -485,7 +485,7 @@ pub fn recover_deleted(image: &[u8], sb: &Superblock) -> Vec<DeletedInode> {
             break; // cov:unreachable: the while-guard already proved the range fits
         };
         if be_u16(slice, 0) == XFS_DINODE_MAGIC {
-            if let Ok(inode) = Inode::parse(slice) {
+            if let Ok(inode) = Inode::parse(slice, false) {
                 // A freed inode: `di_mode` is zeroed on unlink (as are nlink /
                 // size / nblocks / nextents), but the extent records in the data
                 // fork survive. v2 inodes carry no `di_ino` and no CRC; the minted

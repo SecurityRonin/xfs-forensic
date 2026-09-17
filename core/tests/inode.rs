@@ -246,7 +246,7 @@ fn bigtime_decode_branch() {
     //   raw = 3931363416 * 1e9 + 258024354
     let raw: u64 = 3_931_363_416u64 * 1_000_000_000 + 258_024_354;
     let d = craft_inode(3, 0x8, raw);
-    let inode = Inode::parse(&d).expect("crafted v3 bigtime inode parses");
+    let inode = Inode::parse(&d, false).expect("crafted v3 bigtime inode parses");
     assert!(inode.is_bigtime());
     assert_eq!(inode.atime.secs, 1_783_879_768, "bigtime seconds");
     assert_eq!(inode.atime.nsecs, 258_024_354, "bigtime nanos");
@@ -259,7 +259,7 @@ fn legacy_decode_branch_v3_without_bigtime() {
     // High 32 = seconds, low 32 = nanoseconds (disjoint fields, so `+` == `|`).
     let raw: u64 = (1_783_879_768_u64 << 32) + 71_649_000_u64;
     let d = craft_inode(3, 0x0, raw);
-    let inode = Inode::parse(&d).expect("crafted v3 legacy inode parses");
+    let inode = Inode::parse(&d, false).expect("crafted v3 legacy inode parses");
     assert!(!inode.is_bigtime());
     assert_eq!(inode.atime.secs, 1_783_879_768, "legacy seconds");
     assert_eq!(inode.atime.nsecs, 71_649_000, "legacy nanos");
@@ -272,7 +272,7 @@ fn legacy_negative_seconds_pre_epoch() {
     let secs: i32 = -100;
     let raw: u64 = (u64::from(secs as u32) << 32) + 500_u64;
     let d = craft_inode(2, 0, raw);
-    let inode = Inode::parse(&d).expect("parses");
+    let inode = Inode::parse(&d, false).expect("parses");
     assert_eq!(inode.atime.secs, -100, "negative legacy seconds");
     assert_eq!(inode.atime.nsecs, 500);
 }
@@ -283,7 +283,7 @@ fn legacy_negative_seconds_pre_epoch() {
 fn bad_magic_fails_loud() {
     let mut d = vec![0u8; 512];
     d[0..2].copy_from_slice(&0xDEADu16.to_be_bytes());
-    match Inode::parse(&d).unwrap_err() {
+    match Inode::parse(&d, false).unwrap_err() {
         xfs::XfsError::BadMagic { found, bytes } => {
             // di_magic is a be16 promoted to the be32 error (high half zero).
             assert_eq!(found & 0xffff, 0xDEAD, "offending magic surfaced");
@@ -299,7 +299,7 @@ fn truncated_inode_does_not_panic() {
     let mut d = vec![0u8; 8];
     d[0..2].copy_from_slice(&0x494eu16.to_be_bytes());
     assert!(matches!(
-        Inode::parse(&d).unwrap_err(),
+        Inode::parse(&d, false).unwrap_err(),
         xfs::XfsError::Truncated { .. }
     ));
 }
@@ -325,7 +325,7 @@ fn unknown_format_is_preserved() {
     d[0..2].copy_from_slice(&0x494eu16.to_be_bytes());
     d[4] = 3; // version
     d[5] = 5; // di_format = UUID (unused / unnamed)
-    let inode = Inode::parse(&d).expect("parses");
+    let inode = Inode::parse(&d, false).expect("parses");
     assert_eq!(
         inode.format,
         InodeFormat::Other(5),

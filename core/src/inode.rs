@@ -202,10 +202,17 @@ pub struct Inode {
     pub size: u64,
     /// `di_nblocks` (offset 64) — data + btree blocks used.
     pub nblocks: u64,
-    /// `di_nextents` (offset 76) — number of data-fork extents.
-    pub nextents: u32,
-    /// `di_anextents` (offset 80) — number of attribute-fork extents.
-    pub aextents: u16,
+    /// Number of data-fork extents.
+    ///
+    /// Read from `di_nextents` (be32 @76) normally, or from `di_big_nextents`
+    /// (be64 @24) when the filesystem has `NREXT64`. Widened to `u64` because
+    /// that is what the on-disk field is in the second case.
+    pub nextents: u64,
+    /// Number of attribute-fork extents.
+    ///
+    /// Read from `di_anextents` (be16 @80) normally, or from the be32 @76 when
+    /// the filesystem has `NREXT64`.
+    pub aextents: u32,
     /// `di_forkoff` (offset 82) — attr-fork offset (in 8-byte units).
     pub forkoff: u8,
     /// `di_atime` (offset 32) — last-access time (decoded).
@@ -254,7 +261,22 @@ impl Inode {
     ///   error type).
     /// - [`XfsError::Truncated`] if `data` is shorter than the core for its
     ///   version (v2: 100 bytes; v3: 176 bytes).
-    pub fn parse(data: &[u8]) -> Result<Self, XfsError> {
+    ///
+    /// # `nrext64`
+    ///
+    /// Comes from [`crate::Superblock::has_nrext64`] and decides where the two
+    /// extent counters live. It is a PARAMETER rather than something sniffed
+    /// from the inode because the inode cannot answer it: without the feature,
+    /// offset 24 is zero padding; with it, the same bytes are an extent count
+    /// that may legitimately be zero.
+    ///
+    /// Passing the wrong value does not fail — it yields the ATTRIBUTE-fork
+    /// count where the DATA-fork count belongs. Observed on a real image made by
+    /// xfsprogs 6.x: a 10-byte file with one data extent read back as ten NUL
+    /// bytes, correct in length and entirely wrong, with no error. Prefer
+    /// [`crate::Superblock::read_inode`], which supplies the flag from the
+    /// superblock that governs the image.
+    pub fn parse(data: &[u8], nrext64: bool) -> Result<Self, XfsError> {
         // Identity before length so a wrong-slice error names the bytes read.
         let magic = be_u16(data, 0);
         if magic != XFS_DINODE_MAGIC {
@@ -321,6 +343,15 @@ impl Inode {
         // slice; a v2 inode has none. Non-fatal — surfaced, never fails parse.
         let crc_valid = crc_status(is_v3, data, DINODE_CRC_OFF);
 
+        // NREXT64 moves BOTH counters; see Superblock::has_nrext64 for the
+        // table. Decoded here rather than inline in the struct so the two
+        // layouts sit side by side and cannot drift apart.
+        let (nextents, aextents) = if nrext64 {
+            (be_u64(data, 24), be_u32(data, 76))
+        } else {
+            (u64::from(be_u32(data, 76)), u32::from(be_u16(data, 80)))
+        };
+
         Ok(Self {
             magic,
             mode: be_u16(data, 2),
@@ -329,8 +360,8 @@ impl Inode {
             aformat: u8_at(data, 83),
             size: be_u64(data, 56),
             nblocks: be_u64(data, 64),
-            nextents: be_u32(data, 76),
-            aextents: be_u16(data, 80),
+            nextents,
+            aextents,
             forkoff: u8_at(data, 82),
             atime,
             mtime,

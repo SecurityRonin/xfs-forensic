@@ -286,7 +286,7 @@ fn read_dir_multiblock_data_extent_outside_image_is_skipped() {
     l1 |= 1; // blockcount
     ib[176..184].copy_from_slice(&l0.to_be_bytes());
     ib[184..192].copy_from_slice(&l1.to_be_bytes());
-    let inode = Inode::parse(&ib).unwrap();
+    let inode = Inode::parse(&ib, false).unwrap();
     assert_eq!(inode.format, InodeFormat::Extents);
 
     let entries = read_dir(&img, &sb, &inode).expect("out-of-image data extent must not panic");

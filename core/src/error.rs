@@ -9,6 +9,19 @@ use thiserror::Error;
 #[derive(Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum XfsError {
+    /// The inode's attribute fork uses a format this reader cannot decode.
+    ///
+    /// Loud rather than an empty list: returning "no attributes" for a file
+    /// that has many is the worst available answer, so the offending
+    /// `di_aformat` byte is named.
+    #[error("unsupported attribute fork: {detail} (di_aformat = {aformat})")]
+    UnsupportedAttrFork {
+        /// The `di_aformat` byte actually found.
+        aformat: u8,
+        /// Human-readable description of the unsupported form.
+        detail: &'static str,
+    },
+
     /// The buffer was too small to hold the structure being parsed.
     #[error("buffer too small for {structure}: need {need} bytes, have {have}")]
     Truncated {

@@ -368,3 +368,61 @@ file is committed; the fixtures are built by these functions:
 The env-gated Tier-1 correctness tests above are unchanged: when the minted
 images are present the same behaviours are re-validated against a genuine
 `mkfs.xfs` filesystem; absent, they skip while the crafted path keeps CI green.
+
+#### xfs_xattr.img.gz
+
+- **Source / Identity:** self-minted 320 MiB XFS v5 filesystem (`mkfs.xfs`
+  defaults, 4096-byte blocks, 512-byte inodes, label `XATTRTEST`), built to
+  exercise the attribute fork in all three of its shapes.
+- **Why 320 MiB:** `mkfs.xfs` refuses anything under 300 MB
+  (`Filesystem must be larger than 300MB.`), so this is close to the smallest
+  possible XFS image. It is almost entirely zero and compresses to 338 KiB.
+- **Generator (verbatim)** — run inside the podman machine VM, which has a real
+  kernel and loop devices. A container cannot do this: `mount -o loop` fails
+  with `Operation not permitted` even with `--privileged`, because the VM
+  exposes only `/dev/loop-control` to containers.
+
+  ```sh
+  dd if=/dev/zero of=xfs_xattr.img bs=1M count=320
+  mkfs.xfs -q -f -L XATTRTEST xfs_xattr.img
+  mount -o loop xfs_xattr.img /mnt/xfsx
+  echo shortform > /mnt/xfsx/sf.txt
+  setfattr -n user.small   -v 'tiny-value'         /mnt/xfsx/sf.txt
+  setfattr -n user.comment -v 'a second attribute' /mnt/xfsx/sf.txt
+  echo leaf   > /mnt/xfsx/leaf.txt
+  setfattr -n user.big  -v "$(python3 -c 'import sys;sys.stdout.write("B"*3000)')"  /mnt/xfsx/leaf.txt
+  echo remote > /mnt/xfsx/remote.txt
+  setfattr -n user.huge -v "$(python3 -c 'import sys;sys.stdout.write("H"*20000)')" /mnt/xfsx/remote.txt
+  echo ns > /mnt/xfsx/ns.txt
+  setfattr -n user.u     -v 'user-value'     /mnt/xfsx/ns.txt
+  setfattr -n trusted.t  -v 'trusted-value'  /mnt/xfsx/ns.txt
+  setfattr -n security.s -v 'security-value' /mnt/xfsx/ns.txt
+  mkdir /mnt/xfsx/adir
+  setfattr -n user.ondir -v 'on-a-directory' /mnt/xfsx/adir
+  sync; umount /mnt/xfsx
+  gzip -9 < xfs_xattr.img > xfs_xattr.img.gz
+  ```
+
+- **`SELinux` was enforcing on the build host**, so the kernel added its own
+  `security.selinux` label to every file. Unplanned, and deliberately KEPT: it
+  is exactly the kind of attribute a forensic reader must not lose, and it gave
+  the fixture a real second namespace for free.
+- **Contents.** `core.aformat` read from `xfs_db`, not inferred from value size:
+
+  | inode | file | `aformat` | `naextents` | shape |
+  |---|---|---|---|---|
+  | 131 | `sf.txt` | 1 (local) | 0 | shortform |
+  | 132 | `leaf.txt` | 2 (extents) | 1 | leaf, value local (3000 B) |
+  | 133 | `remote.txt` | 2 (extents) | 2 | leaf, value remote (20000 B) |
+  | 134 | `ns.txt` | 1 (local) | 0 | shortform, 3 namespaces |
+  | 135 | `adir` | 1 (local) | 0 | shortform, on a directory |
+
+- **Ground truth:** `getfattr -d -m '-'` read every attribute back through the
+  Linux XFS driver while the filesystem was still mounted. The oracle is the
+  kernel, not this crate.
+- **This image also has `NREXT64` set** (`sb_features_incompat = 0x2b`), which
+  xfsprogs 6.x enables by default. That is what exposed the 64-bit
+  extent-counter defect — see `core/tests/nrext64.rs`.
+- **Redistribution:** none — self-minted, no third-party data.
+- **MD5 (gz):** `b9a139bb9d1b22347ae88d8d0a94b11c`
+- **Used by:** `core/tests/xattr.rs`, `core/tests/nrext64.rs`

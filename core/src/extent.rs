@@ -113,9 +113,9 @@ impl BmbtRec {
 /// a truncated or lying `nextents` yields only the records that fully fit,
 /// never an over-read.
 #[must_use]
-pub fn read_extents(fork: &[u8], nextents: u32) -> Vec<BmbtRec> {
+pub fn read_extents(fork: &[u8], nextents: u64) -> Vec<BmbtRec> {
     let mut recs = Vec::new();
-    for i in 0..nextents as usize {
+    for i in 0..usize::try_from(nextents).unwrap_or(usize::MAX) {
         let start = i * 16;
         let Some(chunk) = fork.get(start..start + 16) else {
             break;
@@ -141,7 +141,7 @@ pub fn read_file_from_fork(
     image: &[u8],
     sb: &Superblock,
     fork: &[u8],
-    nextents: u32,
+    nextents: u64,
     size: u64,
 ) -> Result<Vec<u8>, XfsError> {
     let recs = read_extents(fork, nextents);

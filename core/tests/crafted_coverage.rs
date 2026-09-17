@@ -152,7 +152,7 @@ fn inode_is_reg_and_data_fork_offset() {
     ib[0..2].copy_from_slice(&0x494eu16.to_be_bytes()); // "IN"
     ib[2..4].copy_from_slice(&0o100_644u16.to_be_bytes()); // S_IFREG
     ib[4] = 3; // v3
-    let v3 = Inode::parse(&ib).unwrap();
+    let v3 = Inode::parse(&ib, false).unwrap();
     assert!(v3.is_reg(), "regular-file inode -> is_reg()");
     assert_eq!(v3.data_fork_offset(), 176, "v3 fork offset");
 
@@ -161,7 +161,7 @@ fn inode_is_reg_and_data_fork_offset() {
     v2b[0..2].copy_from_slice(&0x494eu16.to_be_bytes());
     v2b[2..4].copy_from_slice(&0o100_644u16.to_be_bytes());
     v2b[4] = 2; // v2
-    let v2 = Inode::parse(&v2b).unwrap();
+    let v2 = Inode::parse(&v2b, false).unwrap();
     assert!(v2.is_reg());
     assert_eq!(v2.data_fork_offset(), 100, "v2 fork offset");
 }
@@ -224,7 +224,7 @@ fn read_dir_block_format_via_read_file() {
     );
 
     let sb = Superblock::parse(&img).unwrap();
-    let inode = Inode::parse(&img[ino_off..ino_off + 512]).unwrap();
+    let inode = Inode::parse(&img[ino_off..ino_off + 512], sb.has_nrext64()).unwrap();
     assert_eq!(inode.format, InodeFormat::Extents);
     let entries = sb.read_dir(&img, &inode).expect("block dir lists");
     assert_eq!(entries.len(), 1, "one entry in the block dir");
@@ -276,7 +276,7 @@ fn read_dir_multiblock_format_walks_data_and_skips_leaf() {
     );
 
     let sb = Superblock::parse(&img).unwrap();
-    let inode = Inode::parse(&img[ino_off..ino_off + 512]).unwrap();
+    let inode = Inode::parse(&img[ino_off..ino_off + 512], sb.has_nrext64()).unwrap();
     let entries = sb.read_dir(&img, &inode).expect("multi-block dir lists");
     assert_eq!(entries.len(), 1, "only the DATA-block entry (leaf skipped)");
     assert_eq!(entries[0].name, b"g");
@@ -303,7 +303,7 @@ fn read_file_btree_format_walks_bmbt() {
     ib[5] = 3; // di_format = BTREE
     ib[56..64].copy_from_slice(&8u64.to_be_bytes()); // di_size = 8 bytes
                                                      // fork (offset 176) stays zero: bb_level 0, bb_numrecs 0 -> no leaf ptrs.
-    let inode = Inode::parse(&ib).unwrap();
+    let inode = Inode::parse(&ib, false).unwrap();
     assert_eq!(inode.format, InodeFormat::Btree);
 
     let bytes = sb

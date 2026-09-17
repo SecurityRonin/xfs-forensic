@@ -24,6 +24,21 @@ const XFS_SB_VERSION2_FTYPE: u32 = 0x0000_0200;
 /// per-dirent `ftype` field.
 const XFS_SB_FEAT_INCOMPAT_FTYPE: u32 = 0x0000_0001;
 
+/// `XFS_SB_FEAT_INCOMPAT_NREXT64` — 64-bit extent counters.
+///
+/// Set by default by xfsprogs 6.x, so it is the NORMAL case on any recently
+/// made filesystem, not an exotic option. It MOVES two inode fields:
+///
+/// | | without `NREXT64` | with `NREXT64` |
+/// |---|---|---|
+/// | data-fork extents | `di_nextents` be32 @76 | `di_big_nextents` be64 @**24** |
+/// | attr-fork extents | `di_anextents` be16 @80 | `di_anextents` be32 @**76** |
+///
+/// Reading the old offsets on such an image does not fail — it silently yields
+/// the ATTRIBUTE count where the DATA count belongs. See
+/// [`crate::Inode::parse`].
+const XFS_SB_FEAT_INCOMPAT_NREXT64: u32 = 0x0000_0020;
+
 /// Parsed XFS superblock — geometry and the log2 shift fields the inode-number
 /// decode (P1) needs.
 ///
@@ -149,6 +164,19 @@ impl Superblock {
         }
     }
 
+    /// Whether this filesystem uses 64-bit extent counters
+    /// (`XFS_SB_FEAT_INCOMPAT_NREXT64`).
+    ///
+    /// An inode cannot answer this for itself: without the feature the field at
+    /// offset 24 is zero PADDING, and with it the same bytes are a valid extent
+    /// count that may legitimately be zero. The two are indistinguishable from
+    /// the inode alone, which is why [`crate::Inode::parse`] takes this as a
+    /// parameter instead of sniffing it.
+    #[must_use]
+    pub fn has_nrext64(&self) -> bool {
+        self.is_v5() && self.features_incompat & XFS_SB_FEAT_INCOMPAT_NREXT64 != 0
+    }
+
     /// The on-disk format version: `4` (legacy) or `5` (self-describing/CRC),
     /// taken from the low nibble of `sb_versionnum`.
     #[must_use]
@@ -241,7 +269,7 @@ impl Superblock {
             need: end,
             have: image.len(),
         })?;
-        Inode::parse(slice)
+        Inode::parse(slice, self.has_nrext64())
     }
 }
 

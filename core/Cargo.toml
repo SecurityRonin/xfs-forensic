@@ -63,3 +63,7 @@ workspace = true
 [[test]]
 name = "xattr"
 required-features = ["vfs"]
+
+[[test]]
+name = "nrext64"
+required-features = ["vfs"]

@@ -237,7 +237,7 @@ fn flipped_byte_breaks_inode_crc() {
     // Root inode 128 lives at byte 65536 (agblock 16 * blocksize 4096).
     let mut ino = img[65536..65536 + SECTOR].to_vec();
     ino[0x18] ^= 0x01; // flip a byte in the covered region (di_nlink area)
-    let inode = Inode::parse(&ino).expect("still parses (non-fatal)");
+    let inode = Inode::parse(&ino, false).expect("still parses (non-fatal)");
     assert_eq!(
         inode.crc_valid,
         Some(false),

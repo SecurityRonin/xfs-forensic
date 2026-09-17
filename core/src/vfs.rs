@@ -38,8 +38,8 @@
 use forensic_vfs::{
     Allocation, ByteRun, Confidence, DirEntry as VfsDirEntry, DirStream, DynSource, ExtentStream,
     FileId, FileSystem, FsKind, FsMeta, MacbTimes, NodeKind, NodeStream, ResidencyKind, RunAlloc,
-    RunFlags, RunInfo, SectorSizes, SmallHex, SniffWindow, StreamId, TimeResolution, TimeSource,
-    TimeStamp, TimeZonePolicy, VfsError, VfsResult,
+    RunFlags, RunInfo, SectorSizes, SmallHex, SniffWindow, StreamId, StreamInfo, StreamKind,
+    TimeResolution, TimeSource, TimeStamp, TimeZonePolicy, VfsError, VfsResult,
 };
 
 use crate::error::XfsError;
@@ -272,9 +272,66 @@ impl FileSystem for XfsFs {
         })
     }
 
-    fn read_at(&self, ino: FileId, stream: StreamId, off: u64, buf: &mut [u8]) -> VfsResult<usize> {
-        require_default_stream(stream)?;
+    /// The file's contents, plus one entry per extended attribute.
+    ///
+    /// Residency follows where XFS actually put the value: shortform lives in
+    /// the inode's literal area and a leaf-local value in the leaf block (both
+    /// `Resident`), while a remote value occupies blocks of its own
+    /// (`NonResident`). Attributes are reported under their FULL name —
+    /// `security.selinux`, not the bare `selinux` XFS stores beside a flag bit.
+    ///
+    /// An attribute fork this reader cannot decode (the btree form) surfaces as
+    /// an error rather than an empty list: reporting "no attributes" for a file
+    /// that has many is the worst available answer.
+    fn data_streams(&self, ino: FileId) -> VfsResult<Vec<StreamInfo>> {
         let inode = self.inode(ino)?;
+        let mut out = vec![StreamInfo {
+            id: StreamId::Default,
+            name: None,
+            size: inode.size,
+            residency: ResidencyKind::NonResident,
+            kind: StreamKind::Data,
+        }];
+        let attrs = crate::xattr::list_xattrs(&self.image, &self.sb, &inode).map_err(map_err)?;
+        for (i, x) in attrs.iter().enumerate() {
+            let residency = match x.storage {
+                crate::xattr::XattrStorage::Shortform | crate::xattr::XattrStorage::LeafLocal => {
+                    ResidencyKind::Resident {
+                        inline_len: u32::try_from(x.value.len()).unwrap_or(u32::MAX),
+                    }
+                }
+                crate::xattr::XattrStorage::LeafRemote { .. } => ResidencyKind::NonResident,
+            };
+            out.push(StreamInfo {
+                id: StreamId::Xattr(u16::try_from(i).unwrap_or(u16::MAX)),
+                name: Some(x.full_name().into_bytes()),
+                size: x.value.len() as u64,
+                residency,
+                kind: StreamKind::Xattr,
+            });
+        }
+        Ok(out)
+    }
+
+    fn read_at(&self, ino: FileId, stream: StreamId, off: u64, buf: &mut [u8]) -> VfsResult<usize> {
+        let inode = self.inode(ino)?;
+        // Attributes are dispatched BEFORE the default-stream guard: that guard
+        // refuses stream kinds XFS does not have, and attributes are one it does.
+        if let StreamId::Xattr(idx) = stream {
+            let all = crate::xattr::list_xattrs(&self.image, &self.sb, &inode).map_err(map_err)?;
+            let x = all.get(idx as usize).ok_or_else(|| VfsError::Unsupported {
+                layer: "xfs xattr index",
+                scheme: format!("attribute {idx} of {}", all.len()),
+            })?;
+            let start = usize::try_from(off).unwrap_or(usize::MAX);
+            let Some(slice) = x.value.get(start..) else {
+                return Ok(0);
+            };
+            let n = slice.len().min(buf.len());
+            buf[..n].copy_from_slice(&slice[..n]);
+            return Ok(n);
+        }
+        require_default_stream(stream)?;
         // xfs-core exposes only whole-file reconstruction; window its result to
         // [off, off+buf.len()). A start past EOF reads zero bytes (never panics).
         let file = self.sb.read_file(&self.image, &inode).map_err(map_err)?;
