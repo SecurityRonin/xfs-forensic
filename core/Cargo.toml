@@ -50,6 +50,8 @@ crc = { workspace = true }
 forensic-vfs = { workspace = true, optional = true }
 
 [dev-dependencies]
+# The XFS fixture is 320 MB raw (mkfs.xfs refuses less) and 338 KB gzipped.
+flate2 = "1"
 # Independent content-hash oracle for the P3 Tier-1 gate: the reconstructed
 # file bytes are hashed with a third-party SHA-256 and compared to the mount-ro
 # ground truth. Test-only — never a production dependency of the reader.
@@ -57,3 +59,7 @@ sha2 = "0.10"
 
 [lints]
 workspace = true
+
+[[test]]
+name = "xattr"
+required-features = ["vfs"]
