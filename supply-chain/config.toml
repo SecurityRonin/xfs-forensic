@@ -22,9 +22,19 @@ audit-as-crates-io = false
 [policy.xfs-forensic]
 audit-as-crates-io = false
 
+[[exemptions.adler2]]
+version = "2.0.1"
+criteria = "safe-to-run"
+notes = "test-only: reached solely through flate2, a dev-dependency of xfs-core that decompresses committed .gz fixtures; not shipped. In the graph since 2026-09-17, unvetted since (CI could not build to report it). Unreviewed; added 2026-11-12."
+
 [[exemptions.cfg-if]]
 version = "1.0.4"
 criteria = "safe-to-run"
+
+[[exemptions.cfg-if]]
+version = "1.0.5"
+criteria = "safe-to-run"
+notes = "test-only: reached solely through flate2, a dev-dependency of xfs-core that decompresses committed .gz fixtures; not shipped. In the graph since 2026-09-17, unvetted since (CI could not build to report it). Unreviewed; added 2026-11-12."
 
 [[exemptions.cpufeatures]]
 version = "0.2.17"
@@ -38,6 +48,11 @@ criteria = "safe-to-deploy"
 version = "2.5.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.crc32fast]]
+version = "1.5.2"
+criteria = "safe-to-run"
+notes = "test-only: reached solely through flate2, a dev-dependency of xfs-core that decompresses committed .gz fixtures; not shipped. In the graph since 2026-09-17, unvetted since (CI could not build to report it). Unreviewed; added 2026-11-12."
+
 [[exemptions.crypto-common]]
 version = "0.1.7"
 criteria = "safe-to-run"
@@ -46,9 +61,15 @@ criteria = "safe-to-run"
 version = "0.10.7"
 criteria = "safe-to-run"
 
-[[exemptions.libc]]
-version = "0.2.186"
+[[exemptions.flate2]]
+version = "1.1.10"
 criteria = "safe-to-run"
+notes = "test-only: reached solely through flate2, a dev-dependency of xfs-core that decompresses committed .gz fixtures; not shipped. In the graph since 2026-09-17, unvetted since (CI could not build to report it). Unreviewed; added 2026-11-12."
+
+[[exemptions.miniz_oxide]]
+version = "0.9.1"
+criteria = "safe-to-run"
+notes = "test-only: reached solely through flate2, a dev-dependency of xfs-core that decompresses committed .gz fixtures; not shipped. No imported auditor trusts its publisher for this version. Unreviewed; added 2026-11-12."
 
 [[exemptions.proc-macro2]]
 version = "1.0.107"
@@ -58,26 +79,20 @@ criteria = "safe-to-deploy"
 version = "0.10.9"
 criteria = "safe-to-run"
 
-[[exemptions.syn]]
-version = "3.0.2"
-criteria = "safe-to-deploy"
-
-[[exemptions.thiserror]]
-version = "2.0.19"
-criteria = "safe-to-deploy"
-
-[[exemptions.thiserror-impl]]
-version = "2.0.19"
-criteria = "safe-to-deploy"
+[[exemptions.simd-adler32]]
+version = "0.3.10"
+criteria = "safe-to-run"
+notes = "test-only: reached solely through flate2, a dev-dependency of xfs-core that decompresses committed .gz fixtures; not shipped. No imported auditor trusts its publisher for this version. Unreviewed; added 2026-11-12."
 
 [[exemptions.typenum]]
 version = "1.20.1"
 criteria = "safe-to-run"
 
-[[exemptions.unicode-ident]]
-version = "1.0.24"
-criteria = "safe-to-deploy"
-
 [[exemptions.version_check]]
 version = "0.9.5"
 criteria = "safe-to-run"
+
+[[exemptions.zlib-rs]]
+version = "0.6.8"
+criteria = "safe-to-run"
+notes = "test-only: reached solely through flate2, a dev-dependency of xfs-core that decompresses committed .gz fixtures; not shipped. No imported auditor trusts its publisher for this version. Unreviewed; added 2026-11-12."

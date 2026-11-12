@@ -47,7 +47,7 @@ thiserror = { workspace = true }
 crc = { workspace = true }
 # forensic-vfs (KNOWLEDGE leaf) — the read-only FileSystem navigation contract
 # the `vfs` feature adapts XfsFs onto. Optional; enabled by the `vfs` feature.
-forensic-vfs = { workspace = true, optional = true }
+forensic-vfs = { version = "0.10", optional = true }
 
 [dev-dependencies]
 # The XFS fixture is 320 MB raw (mkfs.xfs refuses less) and 338 KB gzipped.
