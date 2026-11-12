@@ -1,5 +1,8 @@
 //! `xfs-forensic` — anomaly auditor for XFS filesystems.
 //!
+//! Public items here take or return `xfs` types (`Superblock` in `recover_deleted`, `BmbtRec`/`XfsTimestamp` in `DeletedInode`), so `xfs-core` is a
+//! public dependency: an incompatible `xfs-core` changes this crate's API as well.
+//!
 //! Emits graded [`forensicnomicon::report::Finding`]s for XFS-specific forensic
 //! signals: deleted-inode recovery (extent records surviving in inode slack),
 //! directory-slack residue (freed dirents keeping their inode number), and v5
