@@ -15,7 +15,8 @@
 //!
 //! Every constant here was read out of an image the Linux XFS driver wrote
 //! (`tests/data/xfs_xattr.img.gz`) rather than recalled, and one was wrong on
-//! the first attempt — see [`LEAF_HDR_LEN`].
+//! the first attempt: the v5 leaf header length (`LEAF_HDR_LEN`, 80 bytes),
+//! whose comment in this file records why.
 //!
 //! **Shortform** is a 4-byte header (`totsize` be16, `count`, `padding`)
 //! followed by `count` entries of `namelen`, `valuelen`, `flags`, then the name
