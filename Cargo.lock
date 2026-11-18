@@ -244,7 +244,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "xfs-core"
-version = "0.1.6"
+version = "0.2.0"
 dependencies = [
  "crc",
  "flate2",
@@ -255,7 +255,7 @@ dependencies = [
 
 [[package]]
 name = "xfs-forensic"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "forensicnomicon",
  "sha2",
