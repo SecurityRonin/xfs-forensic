@@ -244,7 +244,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "xfs-core"
-version = "0.1.6"
+version = "0.2.0"
 dependencies = [
  "crc",
  "flate2",
@@ -255,7 +255,7 @@ dependencies = [
 
 [[package]]
 name = "xfs-forensic"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "forensicnomicon",
  "sha2",
@@ -267,3 +267,7 @@ name = "zlib-rs"
 version = "0.6.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b268e58e7c693d7c271f93ffc4ba3b380412554231c85bf61ca7af91042a4112"
+
+[[patch.unused]]
+name = "forensic-vfs"
+version = "0.9.0"
